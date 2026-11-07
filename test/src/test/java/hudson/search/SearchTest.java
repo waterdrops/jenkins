@@ -24,13 +24,12 @@
 
 package hudson.search;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.jvnet.hudson.test.QueryUtils.waitUntilStringIsPresent;
 
-import com.gargoylesoftware.htmlunit.Page;
-import com.gargoylesoftware.htmlunit.html.HtmlPage;
 import hudson.model.FreeStyleProject;
 import hudson.model.ListView;
 import hudson.model.User;
@@ -39,7 +38,7 @@ import hudson.security.ACL;
 import hudson.security.ACLContext;
 import hudson.security.GlobalMatrixAuthorizationStrategy;
 import java.io.IOException;
-import java.net.HttpURLConnection;
+import java.lang.reflect.Field;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -48,30 +47,48 @@ import jenkins.model.Jenkins;
 import net.sf.json.JSONArray;
 import net.sf.json.JSONObject;
 import net.sf.json.JSONSerializer;
-import org.junit.Rule;
-import org.junit.Test;
+import org.htmlunit.Page;
+import org.htmlunit.html.HtmlButton;
+import org.htmlunit.html.HtmlInput;
+import org.htmlunit.html.HtmlPage;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.Issue;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.JenkinsRule.WebClient;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
 import org.jvnet.hudson.test.MockFolder;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
 /**
  * @author Kohsuke Kawaguchi
  */
+@WithJenkins
 public class SearchTest {
 
-    @Rule public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
 
-    /**
-     * No exact match should result in a failure status code.
-     */
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
+
+    private void searchWithoutNavigating(HtmlPage page, String query) throws IOException {
+        HtmlButton button = page.querySelector("#root-action-SearchAction");
+        button.click();
+
+        HtmlInput search = page.querySelector("#command-bar");
+        search.setValue(query);
+        page.executeJavaScript("document.querySelector('#command-bar').dispatchEvent(new Event(\"input\"))");
+    }
+
     @Test
-    public void testFailure() throws Exception {
-        WebClient wc = j.createWebClient()
-                .withThrowExceptionOnFailingStatusCode(false);
-        HtmlPage resultPage = wc.search("no-such-thing");
-        assertEquals(HttpURLConnection.HTTP_NOT_FOUND, resultPage.getWebResponse().getStatusCode());
+    void testFailure() throws Exception {
+        HtmlPage page = j.createWebClient().goTo("");
+
+        searchWithoutNavigating(page, "no-such-thing");
+
+        waitUntilStringIsPresent(page, "No results for no-such-thing");
     }
 
     /**
@@ -79,18 +96,22 @@ public class SearchTest {
      */
     @Issue("JENKINS-3415")
     @Test
-    public void testXSS() throws Exception {
-        WebClient wc = j.createWebClient()
-                .withThrowExceptionOnFailingStatusCode(false);
+    void testXSS() throws Exception {
+        WebClient wc = j.createWebClient();
         wc.setAlertHandler((page, message) -> {
             throw new AssertionError();
         });
-        HtmlPage resultPage = wc.search("<script>alert('script');</script>");
-        assertEquals(HttpURLConnection.HTTP_NOT_FOUND, resultPage.getWebResponse().getStatusCode());
+        FreeStyleProject freeStyleProject = j.createFreeStyleProject("Project");
+        freeStyleProject.setDisplayName("<script>alert('script');</script>");
+
+        Page result = wc.search("<script>alert('script');</script>");
+
+        assertNotNull(result);
+        assertEquals(j.getInstance().getRootUrl() + freeStyleProject.getUrl(), result.getUrl().toString());
     }
 
     @Test
-    public void testSearchByProjectName() throws Exception {
+    void testSearchByProjectName() throws Exception {
         final String projectName = "testSearchByProjectName";
 
         j.createFreeStyleProject(projectName);
@@ -101,12 +122,12 @@ public class SearchTest {
 
         // make sure we've fetched the testSearchByDisplayName project page
         String contents = result.getWebResponse().getContentAsString();
-        assertTrue(contents.contains(String.format("<title>%s [Jenkins]</title>", projectName)));
+        assertTrue(contents.contains(String.format("<title>%s - Jenkins</title>", projectName)));
     }
 
     @Issue("JENKINS-24433")
     @Test
-    public void testSearchByProjectNameBehindAFolder() throws Exception {
+    void testSearchByProjectNameBehindAFolder() throws Exception {
         FreeStyleProject myFreeStyleProject = j.createFreeStyleProject("testSearchByProjectName");
         MockFolder myMockFolder = j.createFolder("my-folder-1");
 
@@ -121,12 +142,12 @@ public class SearchTest {
 
     @Issue("JENKINS-24433")
     @Test
-    public void testSearchByProjectNameInAFolder() throws Exception {
+    void testSearchByProjectNameInAFolder() throws Exception {
 
         MockFolder myMockFolder = j.createFolder("my-folder-1");
         FreeStyleProject myFreeStyleProject = myMockFolder.createProject(FreeStyleProject.class, "my-job-1");
 
-        Page result = j.createWebClient().goTo(myMockFolder.getUrl() + "search?q=" + myFreeStyleProject.getFullName());
+        Page result = j.search(myFreeStyleProject.getName());
 
         assertNotNull(result);
         j.assertGoodStatus(result);
@@ -136,7 +157,7 @@ public class SearchTest {
     }
 
     @Test
-    public void testSearchByDisplayName() throws Exception {
+    void testSearchByDisplayName() throws Exception {
         final String displayName = "displayName9999999";
 
         FreeStyleProject project = j.createFreeStyleProject("testSearchByDisplayName");
@@ -148,11 +169,11 @@ public class SearchTest {
 
         // make sure we've fetched the testSearchByDisplayName project page
         String contents = result.getWebResponse().getContentAsString();
-        assertTrue(contents.contains(String.format("<title>%s [Jenkins]</title>", displayName)));
+        assertTrue(contents.contains(String.format("<title>%s - Jenkins</title>", displayName)));
     }
 
     @Test
-    public void testSearch2ProjectsWithSameDisplayName() throws Exception {
+    void testSearch2ProjectsWithSameDisplayName() throws Exception {
         // create 2 freestyle projects with the same display name
         final String projectName1 = "projectName1";
         final String projectName2 = "projectName2";
@@ -176,47 +197,12 @@ public class SearchTest {
 
         // make sure we've fetched the testSearchByDisplayName project page
         String contents = result.getWebResponse().getContentAsString();
-        assertTrue(contents.contains(String.format("<title>%s [Jenkins]</title>", displayName)));
+        assertTrue(contents.contains(String.format("<title>%s - Jenkins</title>", displayName)));
         assertFalse(contents.contains(otherDisplayName));
     }
 
     @Test
-    public void testProjectNamePrecedesDisplayName() throws Exception {
-        final String project1Name = "foo";
-        final String project1DisplayName = "project1DisplayName";
-        final String project2Name = "project2Name";
-        final String project2DisplayName = project1Name;
-        final String project3Name = "project3Name";
-        final String project3DisplayName = "project3DisplayName";
-
-        // create 1 freestyle project with the name foo
-        FreeStyleProject project1 = j.createFreeStyleProject(project1Name);
-        project1.setDisplayName(project1DisplayName);
-
-        // create another with the display name foo
-        FreeStyleProject project2 = j.createFreeStyleProject(project2Name);
-        project2.setDisplayName(project2DisplayName);
-
-        // create a third project and make sure it's not picked up by search
-        FreeStyleProject project3 = j.createFreeStyleProject(project3Name);
-        project3.setDisplayName(project3DisplayName);
-
-        // search for foo
-        Page result = j.search(project1Name);
-        assertNotNull(result);
-        j.assertGoodStatus(result);
-
-        // make sure we get the project with the name foo
-        String contents = result.getWebResponse().getContentAsString();
-        assertTrue(contents.contains(String.format("<title>%s [Jenkins]</title>", project1DisplayName)));
-        // make sure projects 2 and 3 were not picked up
-        assertFalse(contents.contains(project2Name));
-        assertFalse(contents.contains(project3Name));
-        assertFalse(contents.contains(project3DisplayName));
-    }
-
-    @Test
-    public void testGetSuggestionsHasBothNamesAndDisplayNames() throws Exception {
+    void testGetSuggestionsHasBothNamesAndDisplayNames() throws Exception {
         final String projectName = "project name";
         final String displayName = "display name";
 
@@ -257,7 +243,7 @@ public class SearchTest {
 
     @Issue("JENKINS-24433")
     @Test
-    public void testProjectNameBehindAFolderDisplayName() throws Exception {
+    void testProjectNameBehindAFolderDisplayName() throws Exception {
         final String projectName1 = "job-1";
         final String displayName1 = "job-1 display";
 
@@ -300,7 +286,7 @@ public class SearchTest {
 
     @Issue("JENKINS-24433")
     @Test
-    public void testProjectNameInAFolderDisplayName() throws Exception {
+    void testProjectNameInAFolderDisplayName() throws Exception {
         final String projectName1 = "job-1";
         final String displayName1 = "job-1 display";
 
@@ -334,7 +320,7 @@ public class SearchTest {
 
             String name = (String) jsonSuggestion.get("name");
 
-            if (displayName2.equals(name)) {
+            if ("my-folder-1 » job-2".equals(name)) {
                 foundDisplayName = true;
             }
         }
@@ -347,7 +333,7 @@ public class SearchTest {
      */
     @Issue("JENKINS-13148")
     @Test
-    public void testDisabledJobShouldBeSearchable() throws Exception {
+    void testDisabledJobShouldBeSearchable() throws Exception {
         FreeStyleProject p = j.createFreeStyleProject("foo-bar");
         assertTrue(suggest(j.jenkins.getSearchIndex(), "foo").contains(p));
 
@@ -360,8 +346,9 @@ public class SearchTest {
      */
     @Issue("JENKINS-13148")
     @Test
-    public void testCompletionOutsideView() throws Exception {
+    void testCompletionOutsideView() throws Exception {
         FreeStyleProject p = j.createFreeStyleProject("foo-bar");
+        p.setDisplayName("display-name-only");
         ListView v = new ListView("empty1", j.jenkins);
         ListView w = new ListView("empty2", j.jenkins);
         j.jenkins.addView(v);
@@ -374,11 +361,12 @@ public class SearchTest {
         assertFalse(j.jenkins.getPrimaryView().contains(p));
 
         assertTrue(suggest(j.jenkins.getSearchIndex(), "foo").contains(p));
+        assertTrue(suggest(j.jenkins.getSearchIndex(), "display-name").contains(p));
     }
 
     @Issue("SECURITY-385")
     @Test
-    public void testInaccessibleViews() throws IOException {
+    void testInaccessibleViews() throws IOException {
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
         GlobalMatrixAuthorizationStrategy strategy = new GlobalMatrixAuthorizationStrategy();
         strategy.add(Jenkins.READ, "alice");
@@ -387,28 +375,25 @@ public class SearchTest {
         j.jenkins.addView(new ListView("foo", j.jenkins));
 
         // SYSTEM can see all the views
-        assertEquals("two views exist", 2, Jenkins.get().getViews().size());
+        assertEquals(2, Jenkins.get().getViews().size(), "two views exist");
         List<SearchItem> results = new ArrayList<>();
         j.jenkins.getSearchIndex().suggest("foo", results);
-        assertEquals("nonempty results list", 1, results.size());
+        assertEquals(1, results.size(), "nonempty results list");
 
 
         // Alice can't
-        assertFalse("no permission", j.jenkins.getView("foo").hasPermission2(User.get("alice").impersonate2(), View.READ));
-        ACL.impersonate2(User.get("alice").impersonate2(), new Runnable() {
-            @Override
-            public void run() {
-                assertEquals("no visible views", 0, Jenkins.get().getViews().size());
+        assertFalse(j.jenkins.getView("foo").hasPermission2(User.get("alice").impersonate2(), View.READ), "no permission");
+        ACL.impersonate2(User.get("alice").impersonate2(), () -> {
+            assertEquals(0, Jenkins.get().getViews().size(), "no visible views");
 
-                List<SearchItem> results = new ArrayList<>();
-                j.jenkins.getSearchIndex().suggest("foo", results);
-                assertEquals("empty results list", Collections.emptyList(), results);
-            }
+            List<SearchItem> results1 = new ArrayList<>();
+            j.jenkins.getSearchIndex().suggest("foo", results1);
+            assertEquals(Collections.emptyList(), results1, "empty results list");
         });
     }
 
     @Test
-    public void testSearchWithinFolders() throws Exception {
+    void testSearchWithinFolders() throws Exception {
         MockFolder folder1 = j.createFolder("folder1");
         FreeStyleProject p1 = folder1.createProject(FreeStyleProject.class, "myjob");
         MockFolder folder2 = j.createFolder("folder2");
@@ -421,7 +406,7 @@ public class SearchTest {
 
     @Test
     @Issue("JENKINS-7874")
-    public void adminOnlyLinksNotShownToRegularUser() {
+    void adminOnlyLinksNotShownToRegularUser() {
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
         MockAuthorizationStrategy mas = new MockAuthorizationStrategy();
         mas.grant(Jenkins.READ).onRoot().toEveryone();
@@ -432,7 +417,7 @@ public class SearchTest {
             j.jenkins.getSearchIndex().find("config", results);
             j.jenkins.getSearchIndex().find("manage", results);
             j.jenkins.getSearchIndex().find("log", results);
-            assertEquals("empty results list", 0, results.size());
+            assertEquals(0, results.size(), "empty results list");
         }
     }
 
@@ -444,7 +429,7 @@ public class SearchTest {
 
     @Issue("JENKINS-35459")
     @Test
-    public void testProjectNameInAListView() throws Exception {
+    void testProjectNameInAListView() throws Exception {
         MockFolder myMockFolder = j.createFolder("folder");
         FreeStyleProject freeStyleProject = myMockFolder.createProject(FreeStyleProject.class, "myJob");
 
@@ -479,5 +464,58 @@ public class SearchTest {
 
         URL resultUrl = searchResult.getUrl();
         assertEquals(j.getInstance().getRootUrl() + freeStyleProject.getUrl(), resultUrl.toString());
+    }
+
+    @Test
+    @Issue("SECURITY-2399")
+    void testSearchBound() throws Exception {
+
+        final String projectName1 = "projectName1";
+        final String projectName2 = "projectName2";
+        final String projectName3 = "projectName3";
+
+        j.createFreeStyleProject(projectName1);
+        j.createFreeStyleProject(projectName2);
+        j.createFreeStyleProject(projectName3);
+
+        final JenkinsRule.WebClient wc = j.createWebClient();
+
+        Page result = wc.goTo("search/suggest?query=projectName", "application/json");
+        JSONArray suggestions = getSearchJson(result);
+        assertEquals(3, suggestions.size());
+
+        Field declaredField = Search.class.getDeclaredField("MAX_SEARCH_SIZE");
+        declaredField.setAccessible(true);
+        declaredField.set(null, 2);
+
+        Page maximizedResult = wc.goTo("search/suggest?query=projectName", "application/json");
+        JSONArray maximizedSuggestions = getSearchJson(maximizedResult);
+        assertEquals(2, maximizedSuggestions.size());
+    }
+
+    private JSONArray getSearchJson(Page page) {
+        assertNotNull(page);
+        j.assertGoodStatus(page);
+        String content = page.getWebResponse().getContentAsString();
+        JSONObject jsonContent = (JSONObject) JSONSerializer.toJSON(content);
+        assertNotNull(jsonContent);
+        JSONArray jsonArray = jsonContent.getJSONArray("suggestions");
+        assertNotNull(jsonArray);
+        return jsonArray;
+    }
+
+    @Issue("27210")
+    @Test
+    void testOpenSearchXml() throws Exception {
+        WebClient wc = j.createWebClient();
+        Page page = wc.goTo("opensearch.xml", "application/opensearchdescription+xml");
+        assertNotNull(page);
+        j.assertGoodStatus(page);
+
+        assertEquals("application/opensearchdescription+xml", page.getWebResponse().getContentType());
+
+        String content = page.getWebResponse().getContentAsString();
+        assertTrue(content.contains("xmlns:moz=\"http://www.mozilla.org/2006/browser/search/\""));
+        assertTrue(content.contains("<moz:SearchForm>"));
     }
 }

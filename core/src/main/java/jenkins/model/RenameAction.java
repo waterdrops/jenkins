@@ -29,6 +29,7 @@ import hudson.model.AbstractItem;
 import hudson.model.Action;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Set;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 
@@ -37,7 +38,7 @@ public class RenameAction implements Action {
 
     @Override
     public String getIconFileName() {
-        return "notepad.png";
+        return "symbol-edit";
     }
 
     @Override
@@ -50,7 +51,7 @@ public class RenameAction implements Action {
         return "confirm-rename";
     }
 
-    @Extension
+    @Extension(ordinal = 70)
     public static class TransientActionFactoryImpl extends TransientActionFactory<AbstractItem> {
 
         @Override
@@ -61,7 +62,7 @@ public class RenameAction implements Action {
         @Override
         public Collection<? extends Action> createFor(AbstractItem target) {
             if (target.isNameEditable()) {
-                return Collections.singleton(new RenameAction());
+                return Set.of(new RenameAction());
             } else {
                 return Collections.emptyList();
             }

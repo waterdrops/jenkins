@@ -1,11 +1,8 @@
 package jenkins.security;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import com.gargoylesoftware.htmlunit.FailingHttpStatusCodeException;
-import com.gargoylesoftware.htmlunit.Page;
-import com.gargoylesoftware.htmlunit.WebRequest;
 import hudson.ExtensionList;
 import hudson.model.UnprotectedRootAction;
 import hudson.model.User;
@@ -14,29 +11,33 @@ import java.io.IOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import jenkins.security.apitoken.ApiTokenTestHelper;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import jenkins.security.apitoken.ApiTokenPropertyConfiguration;
+import org.htmlunit.FailingHttpStatusCodeException;
+import org.htmlunit.Page;
+import org.htmlunit.WebRequest;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.JenkinsRule.WebClient;
 import org.jvnet.hudson.test.TestExtension;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 import org.kohsuke.stapler.HttpResponse;
-import org.xml.sax.SAXException;
 
 /**
  * @author Kohsuke Kawaguchi
  */
-public class BasicHeaderProcessorTest {
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+@WithJenkins
+class BasicHeaderProcessorTest {
 
     private WebClient wc;
 
     private SpySecurityListener spySecurityListener;
 
-    @Before
-    public void prepareListeners() {
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
         this.spySecurityListener = ExtensionList.lookupSingleton(SpySecurityListener.class);
     }
 
@@ -44,9 +45,7 @@ public class BasicHeaderProcessorTest {
      * Tests various ways to send the Basic auth.
      */
     @Test
-    public void testVariousWaysToCall() throws Exception {
-        ApiTokenTestHelper.enableLegacyBehavior();
-
+    void testVariousWaysToCall() throws Exception {
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
 
         wc = j.createWebClient();
@@ -104,7 +103,7 @@ public class BasicHeaderProcessorTest {
         spySecurityListener.failedToAuthenticateCalls.assertLastEventIsAndThenRemoveIt("foo");
     }
 
-    private void makeRequestAndFail() throws IOException, SAXException {
+    private void makeRequestAndFail() {
         makeRequestWithAuthCodeAndFail(null);
     }
 
@@ -113,8 +112,9 @@ public class BasicHeaderProcessorTest {
     }
 
     @Test
-    public void testAuthHeaderCaseInSensitive() throws Exception {
-        ApiTokenTestHelper.enableLegacyBehavior();
+    void testAuthHeaderCaseInSensitive() throws Exception {
+        ApiTokenPropertyConfiguration tokenConfig = ApiTokenPropertyConfiguration.get();
+        tokenConfig.setTokenGenerationOnCreationEnabled(true);
 
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
         User foo = User.getOrCreateByIdOrFullName("foo");
@@ -163,13 +163,11 @@ public class BasicHeaderProcessorTest {
         assertEquals(expectedLogin, p.getWebResponse().getContentAsString());
     }
 
-    private void makeRequestWithAuthCodeAndFail(String authCode) throws IOException {
-        try {
-            makeRequestWithAuthCodeAndVerify(authCode, "-");
-            fail();
-        } catch (FailingHttpStatusCodeException e) {
-            assertEquals(401, e.getStatusCode());
-        }
+    private void makeRequestWithAuthCodeAndFail(String authCode) {
+        FailingHttpStatusCodeException e = assertThrows(
+                FailingHttpStatusCodeException.class,
+                () -> makeRequestWithAuthCodeAndVerify(authCode, "-"));
+        assertEquals(401, e.getStatusCode());
     }
 
     @TestExtension

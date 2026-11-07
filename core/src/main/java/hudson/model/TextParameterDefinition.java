@@ -32,7 +32,7 @@ import java.util.Objects;
 import net.sf.json.JSONObject;
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.StaplerRequest2;
 
 /**
  * {@link StringParameterDefinition} that uses textarea, instead of text box.
@@ -55,6 +55,7 @@ public class TextParameterDefinition extends StringParameterDefinition {
 
     @Extension @Symbol({"text", "textParam"})
     public static class DescriptorImpl extends ParameterDescriptor {
+        @NonNull
         @Override
         public String getDisplayName() {
             return Messages.TextParameterDefinition_DisplayName();
@@ -67,7 +68,7 @@ public class TextParameterDefinition extends StringParameterDefinition {
     }
 
     @Override
-    public ParameterValue createValue(StaplerRequest req, JSONObject jo) {
+    public ParameterValue createValue(StaplerRequest2 req, JSONObject jo) {
         TextParameterValue value = req.bindJSON(TextParameterValue.class, jo);
         value.setDescription(getDescription());
         return value;

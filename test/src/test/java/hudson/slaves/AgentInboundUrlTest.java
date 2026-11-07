@@ -24,83 +24,76 @@
 
 package hudson.slaves;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.gargoylesoftware.htmlunit.xml.XmlPage;
-import hudson.Util;
-import hudson.model.Computer;
-import hudson.model.Node;
 import hudson.model.Slave;
-import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.logging.Level;
 import jenkins.model.Jenkins;
 import org.dom4j.Document;
 import org.dom4j.Element;
 import org.dom4j.io.DOMReader;
-import org.junit.Rule;
-import org.junit.Test;
-import org.jvnet.hudson.test.FlagRule;
+import org.htmlunit.xml.XmlPage;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.jvnet.hudson.test.Issue;
 import org.jvnet.hudson.test.JenkinsRule;
-import org.jvnet.hudson.test.LoggerRule;
+import org.jvnet.hudson.test.LogRecorder;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
+import org.jvnet.hudson.test.junit.jupiter.InboundAgentExtension;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
 /**
  * Tests of {@link JNLPLauncher} using a custom inbound agent url.
  */
-public class AgentInboundUrlTest {
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+@WithJenkins
+class AgentInboundUrlTest {
 
-    @Rule
-    public LoggerRule logging = new LoggerRule().record(Slave.class, Level.FINE);
+    @RegisterExtension
+    private final InboundAgentExtension inboundAgents = new InboundAgentExtension();
+
+    private final LogRecorder logging = new LogRecorder().record(Slave.class, Level.FINE);
 
     // Override the inbound agent url
-    private static final String customInboundUrl = "http://localhost:8080/jenkins";
+    private static final String CUSTOM_INBOUND_URL = "http://localhost:8080/jenkins";
 
-    @Rule
-    public final FlagRule<String> customInboundUrlRule = FlagRule.systemProperty(JNLPLauncher.CUSTOM_INBOUND_URL_PROPERTY, customInboundUrl);
+    private String customInboundUrlRule;
+
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+        customInboundUrlRule = System.setProperty(JNLPLauncher.CUSTOM_INBOUND_URL_PROPERTY, CUSTOM_INBOUND_URL);
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (customInboundUrlRule != null) {
+            System.setProperty(JNLPLauncher.CUSTOM_INBOUND_URL_PROPERTY, customInboundUrlRule);
+        } else {
+            System.clearProperty(JNLPLauncher.CUSTOM_INBOUND_URL_PROPERTY);
+        }
+    }
 
     @Issue("JENKINS-63222")
     @Test
-    public void testInboundAgentUrlOverride() throws Exception {
+    void testInboundAgentUrlOverride() throws Exception {
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
         MockAuthorizationStrategy authorizationStrategy = new MockAuthorizationStrategy();
         authorizationStrategy.grant(Jenkins.ADMINISTER).everywhere().toEveryone();
         j.jenkins.setAuthorizationStrategy(authorizationStrategy);
 
         // Create an agent
-        addTestAgent();
+        inboundAgents.createAgent(j, InboundAgentExtension.Options.newBuilder().name("test").skipStart().build());
 
         // parse the JNLP page into DOM to inspect the jnlp url argument.
         JenkinsRule.WebClient agent = j.createWebClient();
         XmlPage jnlp = (XmlPage) agent.goTo("computer/test/jenkins-agent.jnlp", "application/x-java-jnlp-file");
         Document dom = new DOMReader().read(jnlp.getXmlDocument());
-        Object arg = dom.selectSingleNode("//application-desc/argument[3]/following-sibling::argument[1]");
+        Object arg = dom.selectSingleNode("//application-desc/argument[7]/following-sibling::argument[1]");
         String val = ((Element) arg).getText();
-        assertEquals(customInboundUrl, val);
-    }
-
-    /**
-     * Adds an Inbound TCP agent to the system and returns it.
-     */
-    private void addTestAgent() throws Exception {
-        addTestAgent(new JNLPLauncher(false));
-    }
-
-    /**
-     * Adds an Inbound TCP agent to the system and returns it.
-     */
-    private void addTestAgent(ComputerLauncher launcher) throws Exception {
-        List<Node> agents = new ArrayList<>(j.jenkins.getNodes());
-        File dir = Util.createTempDir();
-        agents.add(new DumbSlave("test", "dummy", dir.getAbsolutePath(), "1", Node.Mode.NORMAL, "",
-                launcher, RetentionStrategy.INSTANCE, new ArrayList<>()));
-        j.jenkins.setNodes(agents);
-        Computer c = j.jenkins.getComputer("test");
-        assertNotNull(c);
+        assertEquals(CUSTOM_INBOUND_URL, val);
     }
 }

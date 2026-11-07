@@ -43,7 +43,6 @@ import hudson.model.ModelObject;
 import hudson.model.UpdateCenter;
 import hudson.model.UpdateSite;
 import hudson.util.VersionNumber;
-import io.jenkins.lib.versionnumber.JavaSpecificationVersion;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
@@ -73,10 +72,7 @@ import jenkins.YesNoMaybe;
 import jenkins.model.Jenkins;
 import jenkins.plugins.DetachedPluginsUtil;
 import jenkins.security.UpdateSiteWarningsMonitor;
-import jenkins.util.AntClassLoader;
 import jenkins.util.URLClassLoader2;
-import jenkins.util.java.JavaUtils;
-import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.LogFactory;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.Beta;
@@ -84,8 +80,8 @@ import org.kohsuke.accmod.restrictions.DoNotUse;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.HttpResponses;
-import org.kohsuke.stapler.StaplerRequest;
-import org.kohsuke.stapler.StaplerResponse;
+import org.kohsuke.stapler.StaplerRequest2;
+import org.kohsuke.stapler.StaplerResponse2;
 import org.kohsuke.stapler.export.Exported;
 import org.kohsuke.stapler.export.ExportedBean;
 import org.kohsuke.stapler.interceptor.RequirePOST;
@@ -176,7 +172,7 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
     private final List<Dependency> optionalDependencies;
 
     public List<String> getDependencyErrors() {
-        return Collections.unmodifiableList(new ArrayList<>(dependencyErrors.keySet()));
+        return List.copyOf(dependencyErrors.keySet());
     }
 
     @Restricted(NoExternalUse.class) // Jelly use
@@ -224,7 +220,9 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
      * The core can depend on a plugin if it is bundled. Sometimes it's the only thing that
      * depends on the plugin e.g. UI support library bundle plugin.
      */
-    private static Set<String> CORE_ONLY_DEPENDANT = Collections.singleton("jenkins-core");
+    private static Set<String> CORE_ONLY_DEPENDANT = Set.of("jenkins-core");
+
+    private Integer healthScore;
 
     /**
      * Set the list of components that depend on this plugin.
@@ -255,7 +253,7 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
      */
     @Deprecated
     public void setOptionalDependants(@NonNull Set<String> optionalDependents) {
-        setOptionalDependents(dependents);
+        setOptionalDependents(optionalDependents);
     }
 
     /**
@@ -416,12 +414,7 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
      */
     @Restricted(Beta.class)
     public void injectJarsToClasspath(File... jars) throws Exception {
-        if (classLoader instanceof AntClassLoader) {
-            for (File f : jars) {
-                LOGGER.log(Level.CONFIG, () -> "Inserting " + f + " into " + shortName + " plugin's classpath");
-                ((AntClassLoader) classLoader).addPathComponent(f);
-            }
-        } else if (classLoader instanceof URLClassLoader2) {
+        if (classLoader instanceof URLClassLoader2) {
             for (File f : jars) {
                 LOGGER.log(Level.CONFIG, () -> "Inserting " + f + " into " + shortName + " plugin's classpath");
                 ((URLClassLoader2) classLoader).addURL(f.toURI().toURL());
@@ -430,6 +423,32 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
             throw new AssertionError("PluginWrapper classloader has changed type, but this code has not been updated accordingly");
         }
 
+    }
+
+    @Restricted(NoExternalUse.class) // Jelly use only
+    public Integer getHealthScore() {
+        if (this.healthScore == null) {
+            this.healthScore = getInfoFromAllSites().stream()
+                    .filter(Objects::nonNull)
+                    .filter(p -> p.healthScore != null)
+                    .findFirst()
+                    .map(plugin -> plugin.healthScore)
+                    .orElse(null);
+        }
+        return this.healthScore;
+    }
+
+    @Restricted(NoExternalUse.class)
+    public static String getHealthScoreClassForScore(int score) {
+        if (score > 80) return "top";
+        if (score > 60) return "middle";
+        return "bottom";
+    }
+
+    @Restricted(NoExternalUse.class) // Jelly use only
+    public String getHealthScoreClass() {
+        if (this.healthScore == null) return null;
+        return getHealthScoreClassForScore(this.healthScore);
     }
 
     @ExportedBean
@@ -505,7 +524,12 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
 
     @Override
     public String getDisplayName() {
-        return StringUtils.removeStart(getLongName(), "Jenkins ");
+        String displayName = getLongName();
+        String removePrefix = "Jenkins ";
+        if (displayName != null && displayName.startsWith(removePrefix)) {
+            return displayName.substring(removePrefix.length());
+        }
+        return displayName;
     }
 
     public Api getApi() {
@@ -609,7 +633,7 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
         List<UpdateSite.Plugin> siteMetadataList = getInfoFromAllSites();
         String firstSiteUrl = null;
         if (!siteMetadataList.isEmpty()) {
-            firstSiteUrl = siteMetadataList.get(0).wiki;
+            firstSiteUrl = siteMetadataList.getFirst().wiki;
             if (allUrlsMatch(firstSiteUrl, siteMetadataList)) {
                 return firstSiteUrl;
             }
@@ -688,20 +712,6 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
         v = manifest.getMainAttributes().getValue("Hudson-Version");
         if (v != null) return v;
         return null;
-    }
-
-    /**
-     * Returns the minimum Java version of this plugin, as specified in the plugin metadata.
-     * Generally coming from the {@code java.level} extracted as MANIFEST's metadata with
-     * <a href="https://github.com/jenkinsci/plugin-pom/pull/134">this addition on the plugins' parent pom</a>.
-     *
-     * @see <a href="https://github.com/jenkinsci/maven-hpi-plugin/pull/75">maven-hpi-plugin#PR-75</a>
-     *
-     * @since 2.158
-     */
-    @Exported
-    public @CheckForNull String getMinimumJavaVersion() {
-        return manifest.getMainAttributes().getValue("Minimum-Java-Version");
     }
 
     /**
@@ -868,18 +878,16 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
     }
 
     private Set<String> dependentsToCheck(PluginDisableStrategy strategy) {
-        Set<String> dependentsToCheck;
-        switch (strategy) {
-            case ALL:
+        Set<String> dependentsToCheck = switch (strategy) {
+            case ALL ->
                 // getDependents returns all the dependent plugins, mandatory or optional.
-                dependentsToCheck = this.getDependents();
-                break;
-            default:
+                this.getDependents();
+            default ->
                 // It includes MANDATORY, NONE:
                 // with NONE, the process only fail if mandatory dependent plugins exists
                 // As of getDependents has all the dependents, we get the difference between them and only the optionals
-                dependentsToCheck = Sets.difference(this.getDependents(), this.getOptionalDependents());
-        }
+                Sets.difference(this.getDependents(), this.getOptionalDependents());
+        };
         return dependentsToCheck;
     }
 
@@ -956,14 +964,6 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
                 VersionNumber actualVersion = Jenkins.getVersion();
                 if (actualVersion.isOlderThan(new VersionNumber(requiredCoreVersion))) {
                     versionDependencyError(Messages.PluginWrapper_obsoleteCore(Jenkins.getVersion().toString(), requiredCoreVersion), Jenkins.getVersion().toString(), requiredCoreVersion);
-                }
-            }
-
-            String minimumJavaVersion = getMinimumJavaVersion();
-            if (minimumJavaVersion != null) {
-                JavaSpecificationVersion actualVersion = JavaUtils.getCurrentJavaRuntimeVersionNumber();
-                if (actualVersion.isOlderThan(new JavaSpecificationVersion(minimumJavaVersion))) {
-                    versionDependencyError(Messages.PluginWrapper_obsoleteJava(actualVersion.toString(), minimumJavaVersion), actualVersion.toString(), minimumJavaVersion);
                 }
             }
         }
@@ -1238,7 +1238,7 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
         /**
          * Depending on whether the user said "dismiss" or "correct", send him to the right place.
          */
-        public void doAct(StaplerRequest req, StaplerResponse rsp) throws IOException {
+        public void doAct(StaplerRequest2 req, StaplerResponse2 rsp) throws IOException {
             if (req.hasParameter("correct")) {
                 rsp.sendRedirect(req.getContextPath() + "/pluginManager");
 
@@ -1380,11 +1380,12 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
 
         jenkins.checkPermission(Jenkins.ADMINISTER);
         Files.deleteIfExists(Util.fileToPath(archive));
+        Files.deleteIfExists(Util.fileToPath(disableFile));
 
         // Redo who depends on who.
         jenkins.getPluginManager().resolveDependentPlugins();
 
-        return HttpResponses.redirectViaContextPath("/pluginManager/installed");   // send back to plugin manager
+        return HttpResponses.redirectViaContextPath("/manage/pluginManager/installed");   // send back to plugin manager
     }
 
     @Restricted(DoNotUse.class) // Jelly
@@ -1428,6 +1429,11 @@ public class PluginWrapper implements Comparable<PluginWrapper>, ModelObject {
             }
         }
         return null;
+    }
+
+    private Object readResolve() {
+        LOGGER.log(Level.WARNING, "Blocked deserialization of PluginWrapper for security reasons", new Exception("stack trace"));
+        throw new SecurityException("Blocked deserialization of PluginWrapper for security reasons");
     }
 
     private static final Logger LOGGER = Logger.getLogger(PluginWrapper.class.getName());

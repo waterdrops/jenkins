@@ -29,7 +29,6 @@ import edu.umd.cs.findbugs.annotations.NonNull;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.EnvVars;
 import hudson.Util;
-import hudson.diagnosis.OldDataMonitor;
 import hudson.model.Queue.QueueAction;
 import hudson.model.labels.LabelAssignmentAction;
 import hudson.model.queue.SubTask;
@@ -48,6 +47,8 @@ import java.util.TreeSet;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import jenkins.model.RunAction2;
+import jenkins.model.experimentalflags.NewBuildPageUserExperimentalFlag;
+import jenkins.security.XStreamNotDeserializable;
 import jenkins.util.SystemProperties;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
@@ -89,13 +90,18 @@ public class ParametersAction implements RunAction2, Iterable<ParameterValue>, Q
 
     private List<String> parameterDefinitionNames;
 
-    /**
-     * @deprecated since 1.283; kept to avoid warnings loading old build data, but now transient.
-     */
-    @Deprecated
-    private transient AbstractBuild<?, ?> build;
-
+    @XStreamNotDeserializable
     private transient Run<?, ?> run;
+
+    /**
+     * Returns the {@link Run} this action is attached to, or {@code null} before being attached to a {@link Run}.
+     * Note that this can be non-{@code null} while being accessed from a {@link hudson.model.Queue.Item}.
+     */
+    @Restricted(NoExternalUse.class) // Jelly
+    @CheckForNull
+    public Run<?, ?> getRun() {
+        return run;
+    }
 
     public ParametersAction(@NonNull List<ParameterValue> parameters) {
         this.parameters = new ArrayList<>(parameters);
@@ -208,7 +214,13 @@ public class ParametersAction implements RunAction2, Iterable<ParameterValue>, Q
 
     @Override
     public String getIconFileName() {
-        return "document-properties.png";
+        Boolean newBuildPageEnabled = new NewBuildPageUserExperimentalFlag().getFlagValue();
+
+        if (newBuildPageEnabled) {
+            return null;
+        }
+
+        return "symbol-parameters";
     }
 
     @Override
@@ -291,8 +303,6 @@ public class ParametersAction implements RunAction2, Iterable<ParameterValue>, Q
         if (parameters == null) { // JENKINS-39495
             parameters = Collections.emptyList();
         }
-        if (build != null)
-            OldDataMonitor.report(build, "1.283");
         if (safeParameters == null) {
             safeParameters = Collections.emptySet();
         }
@@ -335,10 +345,11 @@ public class ParametersAction implements RunAction2, Iterable<ParameterValue>, Q
             if (this.parameterDefinitionNames.contains(v.getName()) || isSafeParameter(v.getName())) {
                 filteredParameters.add(v);
             } else if (shouldKeepFlag == null) {
-                LOGGER.log(Level.WARNING, "Skipped parameter `{0}` as it is undefined on `{1}`. Set `-D{2}=true` to allow "
-                        + "undefined parameters to be injected as environment variables or `-D{3}=[comma-separated list]` to whitelist specific parameter names, "
-                        + "even though it represents a security breach or `-D{2}=false` to no longer show this message.",
-                        new Object [] { v.getName(), run.getParent().getFullName(), KEEP_UNDEFINED_PARAMETERS_SYSTEM_PROPERTY_NAME, SAFE_PARAMETERS_SYSTEM_PROPERTY_NAME });
+                LOGGER.log(Level.WARNING, "Skipped parameter `{0}` as it is undefined on `{1}` (#{2}). Set `-D{3}=true` to allow "
+                        + "undefined parameters to be injected as environment variables or `-D{4}=[comma-separated list]` to whitelist specific parameter names, "
+                        + "even though it represents a security breach or `-D{3}=false` to no longer show this message.",
+                        new Object [] { v.getName(), run.getParent().getFullName(), run.getNumber(),
+                                KEEP_UNDEFINED_PARAMETERS_SYSTEM_PROPERTY_NAME, SAFE_PARAMETERS_SYSTEM_PROPERTY_NAME });
             }
         }
 

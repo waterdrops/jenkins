@@ -3,6 +3,7 @@ package jenkins.diagnosis;
 import hudson.Extension;
 import hudson.Functions;
 import hudson.Util;
+import hudson.diagnosis.Messages;
 import hudson.model.AdministrativeMonitor;
 import hudson.util.jna.Kernel32Utils;
 import java.io.BufferedReader;
@@ -33,8 +34,7 @@ import org.jenkinsci.Symbol;
  *
  * @author Kohsuke Kawaguchi
  */
-@Extension(optional = true) @Symbol("hsErrPid")
-// TODO why would an extension using a built-in extension point need to be marked optional?
+@Extension @Symbol("hsErrPid")
 public class HsErrPidList extends AdministrativeMonitor {
     /**
      * hs_err_pid files that we think belong to us.
@@ -84,7 +84,7 @@ public class HsErrPidList extends AdministrativeMonitor {
 
     @Override
     public String getDisplayName() {
-        return "JVM Crash Reports";
+        return Messages.HsErrPidList_DisplayName();
     }
 
     /**

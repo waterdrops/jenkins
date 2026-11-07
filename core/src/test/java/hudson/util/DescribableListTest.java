@@ -24,19 +24,30 @@
 
 package hudson.util;
 
-import static org.junit.Assert.assertEquals;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.allOf;
+import static org.hamcrest.Matchers.arrayContaining;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.thoughtworks.xstream.converters.basic.AbstractSingleValueConverter;
 import hudson.model.Describable;
 import hudson.model.Descriptor;
-import org.junit.Test;
+import hudson.model.Saveable;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.Issue;
 
-public class DescribableListTest {
+class DescribableListTest {
 
     @Issue("JENKINS-49054")
     @Test
-    public void exceptionDuringUnmarshalling() {
+    void exceptionDuringUnmarshalling() {
         Data data = new Data();
         data.list.add(new Datum(1));
         data.list.add(new Datum(2));
@@ -46,6 +57,18 @@ public class DescribableListTest {
         String xml = xs.toXML(data);
         data = (Data) xs.fromXML(xml);
         assertEquals("[1, 3]", data.toString());
+    }
+
+    @Test
+    void replace() throws Exception {
+        AtomicInteger count = new AtomicInteger();
+        DescribableList<Datum, Descriptor<Datum>> list = new DescribableList<>((Saveable) count::incrementAndGet);
+        list.add(new Datum(1));
+        list.add(new Datum(2));
+        assertThat(count.get(), is(2));
+        list.replace(new Datum(3));
+        assertThat(list.stream().map(d -> d.val).toArray(Integer[]::new), arrayContaining(3));
+        assertThat(count.get(), is(3));
     }
 
     private static final class Data {
@@ -69,7 +92,7 @@ public class DescribableListTest {
 
         @Override
         public Descriptor<Datum> getDescriptor() {
-            return new Descriptor<Datum>(Datum.class) {};
+            return new Descriptor<>(Datum.class) {};
         }
 
         @Override
@@ -95,6 +118,64 @@ public class DescribableListTest {
 
         }
 
+    }
+
+    @Test
+    void associatedConverterUsed() {
+        XStream2 xstream = new XStream2();
+
+        final MyDescribableData data = new MyDescribableData();
+        data.describables = new DescribableList<>();
+        data.describables.add(new MyDescribable());
+        final String xml = xstream.toXML(data);
+
+        assertThat(xml, allOf(not(containsString("<data>")), not(containsString("</data>")), not(containsString("<owner"))));
+
+        String craftedXml = xml.replace("<hudson.util.DescribableListTest_-MyDescribable/>", "<string>42</string>");
+        assertThat(xml, not(equalTo(craftedXml)));
+
+        final Object o = xstream.fromXML(craftedXml);
+        assertThat(o, instanceOf(MyDescribableData.class));
+        final DescribableList<MyDescribable, MyDescribable.DescriptorImpl> list = ((MyDescribableData) o).describables;
+        assertThat(list, instanceOf(DescribableList.class));
+        assertThat(list, empty());
+    }
+
+    @Test
+    void associatedConverterUsedForSubclass() {
+        XStream2 xstream = new XStream2();
+
+        final MyDescribableData data = new MyDescribableData();
+        data.describables = new DescribableListSubtype();
+        data.describables.add(new MyDescribable());
+        final String xml = xstream.toXML(data);
+
+        assertThat(xml, allOf(not(containsString("<data>")), not(containsString("</data>")), not(containsString("<owner"))));
+
+        String craftedXml = xml.replace("<hudson.util.DescribableListTest_-MyDescribable/>", "<hudson.util.DescribableListTest_-MyOtherDescribable/>");
+        assertThat(xml, not(equalTo(craftedXml)));
+
+        final Object o = xstream.fromXML(craftedXml);
+        assertThat(o, instanceOf(MyDescribableData.class));
+        final DescribableList<MyDescribable, MyDescribable.DescriptorImpl> list = ((MyDescribableData) o).describables;
+        assertThat(list, instanceOf(DescribableListSubtype.class));
+        assertThat(list, empty());
+    }
+
+    public static class DescribableListSubtype extends DescribableList<MyDescribable, MyDescribable.DescriptorImpl> {}
+
+    private static class MyDescribableData {
+        private DescribableList<MyDescribable, MyDescribable.DescriptorImpl> describables;
+    }
+
+    public static class MyDescribable implements Describable<MyDescribable> {
+        public static class DescriptorImpl extends Descriptor<MyDescribable> {
+        }
+    }
+
+    public static class MyOtherDescribable implements Describable<MyOtherDescribable> {
+        public static class DescriptorImpl extends Descriptor<MyOtherDescribable> {
+        }
     }
 
 }

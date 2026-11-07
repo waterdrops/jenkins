@@ -52,14 +52,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.ObjectStreamException;
 import java.io.RandomAccessFile;
 import java.io.Serializable;
-import java.io.UnsupportedEncodingException;
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -70,7 +65,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.SortedMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -79,8 +73,6 @@ import java.util.logging.Logger;
 import jenkins.agents.AgentComputerUtil;
 import jenkins.security.SlaveToMasterCallable;
 import jenkins.util.SystemProperties;
-import jenkins.util.java.JavaUtils;
-import org.apache.commons.io.FileUtils;
 import org.jenkinsci.remoting.SerializableOnlyOverRemoting;
 import org.jvnet.winp.WinProcess;
 import org.jvnet.winp.WinpException;
@@ -458,40 +450,37 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                 Thread.interrupted(); // Clear the interrupt flag and just accept that no known vetoers exist.
             }
             catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error while determining if vetoers exist", e);
+                LOGGER.log(Level.FINE, "Error while determining if vetoers exist", e);
             }
         }
 
         // Null-check in case the previous call worked
-        boolean vetoes = vetoersExist == null ? true : vetoersExist;
+        boolean vetoes = vetoersExist == null || vetoersExist;
 
         try {
             if (File.pathSeparatorChar == ';')
                 return new Windows(vetoes);
 
             String os = Util.fixNull(System.getProperty("os.name"));
-            if (os.equals("Linux"))
-                return new Linux(vetoes);
-            if (os.equals("AIX"))
-                return new AIX(vetoes);
-            if (os.equals("SunOS"))
-                return new Solaris(vetoes);
-            if (os.equals("Mac OS X"))
-                return new Darwin(vetoes);
-            if (os.equals("FreeBSD"))
-                return new FreeBSD(vetoes);
+            return switch (os) {
+                case "Linux" -> new Linux(vetoes);
+                case "AIX" -> new AIX(vetoes);
+                case "SunOS" -> new Solaris(vetoes);
+                case "Mac OS X" -> new Darwin(vetoes);
+                case "FreeBSD" -> new FreeBSD(vetoes);
+                default -> DEFAULT;
+            };
         } catch (LinkageError e) {
-            LOGGER.log(Level.WARNING, "Failed to load winp. Reverting to the default", e);
+            LOGGER.log(Level.FINE, "Failed to load OS-specific implementation; reverting to the default", e);
             enabled = false;
+            return DEFAULT;
         }
-
-        return DEFAULT;
     }
 
     private static class DoVetoersExist extends SlaveToMasterCallable<Boolean, IOException> {
         @Override
         public Boolean call() throws IOException {
-            return ProcessKillingVeto.all().size() > 0;
+            return !ProcessKillingVeto.all().isEmpty();
         }
     }
 
@@ -757,7 +746,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
         @CheckForNull
         @Override
         public OSProcess get(@NonNull Process proc) {
-            return get(UnixReflection.pid(proc));
+            return get(Math.toIntExact(proc.pid()));
         }
 
         @Override
@@ -825,33 +814,20 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
         private void kill(long deadline) throws InterruptedException {
             if (getVeto() != null)
                 return;
-            try {
-                int pid = getPid();
-                LOGGER.fine("Killing pid=" + pid);
-                UnixReflection.destroy(pid);
-                // after sending SIGTERM, wait for the process to cease to exist
-                int sleepTime = 10; // initially we sleep briefly, then sleep up to 1sec
-                File status = getFile("status");
-                do {
-                    if (!status.exists()) {
-                        break; // status is gone, process therefore as well
-                    }
+            int pid = getPid();
+            LOGGER.fine("Killing pid=" + pid);
+            ProcessHandle.of(pid).ifPresent(ProcessHandle::destroy);
+            // after sending SIGTERM, wait for the process to cease to exist
+            int sleepTime = 10; // initially we sleep briefly, then sleep up to 1sec
+            File status = getFile("status");
+            do {
+                if (!status.exists()) {
+                    break; // status is gone, process therefore as well
+                }
 
-                    Thread.sleep(sleepTime);
-                    sleepTime = Math.min(sleepTime * 2, 1000);
-                } while (System.nanoTime() < deadline);
-            } catch (IllegalAccessException e) {
-                // this is impossible
-                IllegalAccessError x = new IllegalAccessError();
-                x.initCause(e);
-                throw x;
-            } catch (InvocationTargetException e) {
-                // tunnel serious errors
-                if (e.getTargetException() instanceof Error)
-                    throw (Error) e.getTargetException();
-                // otherwise log and let go. I need to see when this happens
-                LOGGER.log(Level.INFO, "Failed to terminate pid=" + getPid(), e);
-            }
+                Thread.sleep(sleepTime);
+                sleepTime = Math.min(sleepTime * 2, 1000);
+            } while (System.nanoTime() < deadline);
             killByKiller();
         }
 
@@ -886,91 +862,6 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
         @NonNull
         public abstract List<String> getArguments();
     }
-
-    //TODO: can be replaced by multi-release JAR
-    /**
-     * Reflection used in the Unix support.
-     */
-    private static final class UnixReflection {
-        /**
-         * Field to access the PID of the process.
-         * Required for Java 8 and older JVMs.
-         */
-        private static final Field JAVA8_PID_FIELD;
-
-        /**
-         * Field to access the PID of the process.
-         * Required for Java 9 and above until this is replaced by multi-release JAR.
-         */
-        private static final Method JAVA9_PID_METHOD;
-
-        /**
-         * Method to destroy a process, given pid.
-         *
-         * Looking at the JavaSE source code, this is using SIGTERM (15)
-         */
-        private static final Method JAVA8_DESTROY_PROCESS;
-        private static final Method JAVA_9_PROCESSHANDLE_OF;
-        private static final Method JAVA_9_PROCESSHANDLE_DESTROY;
-
-        static {
-            try {
-                if (JavaUtils.isRunningWithPostJava8()) {
-                    Class<?> clazz = Process.class;
-                    JAVA9_PID_METHOD = clazz.getMethod("pid");
-                    JAVA8_PID_FIELD = null;
-                    Class<?> processHandleClazz = Class.forName("java.lang.ProcessHandle");
-                    JAVA_9_PROCESSHANDLE_OF = processHandleClazz.getMethod("of", long.class);
-                    JAVA_9_PROCESSHANDLE_DESTROY = processHandleClazz.getMethod("destroy");
-                    JAVA8_DESTROY_PROCESS = null;
-                } else {
-                    Class<?> clazz = Class.forName("java.lang.UNIXProcess");
-                    JAVA8_PID_FIELD = clazz.getDeclaredField("pid");
-                    JAVA8_PID_FIELD.setAccessible(true);
-                    JAVA9_PID_METHOD = null;
-
-                    JAVA8_DESTROY_PROCESS = clazz.getDeclaredMethod("destroyProcess", int.class, boolean.class);
-                    JAVA8_DESTROY_PROCESS.setAccessible(true);
-                    JAVA_9_PROCESSHANDLE_OF = null;
-                    JAVA_9_PROCESSHANDLE_DESTROY = null;
-                }
-            } catch (ClassNotFoundException | NoSuchFieldException | NoSuchMethodException e) {
-                throw new LinkageError("Cannot initialize reflection for Unix Processes", e);
-            }
-        }
-
-        public static void destroy(int pid) throws IllegalAccessException,
-                InvocationTargetException {
-            if (JAVA8_DESTROY_PROCESS != null) {
-                JAVA8_DESTROY_PROCESS.invoke(null, pid, false);
-            } else {
-                final Optional handle = (Optional) JAVA_9_PROCESSHANDLE_OF.invoke(null, pid);
-                if (handle.isPresent()) {
-                    JAVA_9_PROCESSHANDLE_DESTROY.invoke(handle.get());
-                }
-            }
-        }
-
-        //TODO: We ideally need to update ProcessTree APIs to Support Long (JENKINS-53799).
-        public static int pid(@NonNull Process proc) {
-            try {
-                if (JAVA8_PID_FIELD != null) {
-                    return JAVA8_PID_FIELD.getInt(proc);
-                } else {
-                    long pid = (long) JAVA9_PID_METHOD.invoke(proc);
-                    if (pid > Integer.MAX_VALUE) {
-                        throw new IllegalAccessError("Java 9+ support error (JENKINS-53799). PID is out of Jenkins API bounds: " + pid);
-                    }
-                    return (int) pid;
-                }
-            } catch (IllegalAccessException | InvocationTargetException e) { // impossible
-                IllegalAccessError x = new IllegalAccessError();
-                x.initCause(e);
-                throw x;
-            }
-        }
-    }
-
 
     static class Linux extends ProcfsUnix {
         Linux(boolean vetoersExist) {
@@ -1017,7 +908,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                     return arguments;
                 arguments = new ArrayList<>();
                 try {
-                    byte[] cmdline = readFileToByteArray(getFile("cmdline"));
+                    byte[] cmdline = Files.readAllBytes(Util.fileToPath(getFile("cmdline")));
                     int pos = 0;
                     for (int i = 0; i < cmdline.length; i++) {
                         byte b = cmdline[i];
@@ -1041,7 +932,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                     return envVars;
                 envVars = new EnvVars();
                 try {
-                    byte[] environ = readFileToByteArray(getFile("environ"));
+                    byte[] environ = Files.readAllBytes(Util.fileToPath(getFile("environ")));
                     int pos = 0;
                     for (int i = 0; i < environ.length; i++) {
                         byte b = environ[i];
@@ -1055,12 +946,6 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                     // so don't report this as an error.
                 }
                 return envVars;
-            }
-        }
-
-        public byte[] readFileToByteArray(File file) throws IOException {
-            try (InputStream in = FileUtils.openInputStream(file)) {
-                return org.apache.commons.io.IOUtils.toByteArray(in);
             }
         }
     }
@@ -1352,12 +1237,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                     buf.write(ch);
                     addr++;
                 }
-                String line;
-                try {
-                    line = buf.toString(StandardCharsets.UTF_8.name());
-                } catch (UnsupportedEncodingException e) {
-                    throw new AssertionError(e);
-                }
+                String line = buf.toString(StandardCharsets.UTF_8);
                 if (LOGGER.isLoggable(FINEST))
                     LOGGER.finest(prefix + " was " + line);
                 return line;
@@ -1628,12 +1508,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                     buf.write(ch);
                     addr++;
                 }
-                String line;
-                try {
-                    line = buf.toString(StandardCharsets.UTF_8.name());
-                } catch (UnsupportedEncodingException e) {
-                    throw new AssertionError(e);
-                }
+                String line = buf.toString(StandardCharsets.UTF_8);
                 if (LOGGER.isLoggable(FINEST))
                     LOGGER.finest(prefix + " was " + line);
                 return line;
@@ -1801,11 +1676,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                             byte ch;
                             while (offset < length && (ch = getByte(offset++)) != '\0')
                                 baos.write(ch);
-                            try {
-                                return baos.toString(StandardCharsets.UTF_8.name());
-                            } catch (UnsupportedEncodingException e) {
-                                throw new AssertionError(e);
-                            }
+                            return baos.toString(StandardCharsets.UTF_8);
                         }
 
                         void skip0() {
@@ -1889,6 +1760,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
 
         // local constants
         private final int sizeOf_kinfo_proc;
+        // originally from https://github.com/jenkinsci/jenkins/commit/cbdbbf4619e2b4d44f0ae9d5474d185dd942fa25
         private static final int sizeOf_kinfo_proc_32 = 492; // on 32bit Mac OS X.
         private static final int sizeOf_kinfo_proc_64 = 648; // on 64bit Mac OS X.
         private final int kinfo_proc_pid_offset;
@@ -2119,11 +1991,7 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
                     while ((ch = m.getByte(offset++)) != '\0') {
                         baos.write(ch);
                     }
-                    try {
-                        consumer.accept(baos.toString(StandardCharsets.UTF_8.name()));
-                    } catch (UnsupportedEncodingException e) {
-                        throw new AssertionError(e);
-                    }
+                    consumer.accept(baos.toString(StandardCharsets.UTF_8));
                     baos.reset();
                 }
             }
@@ -2245,12 +2113,12 @@ public abstract class ProcessTree implements Iterable<OSProcess>, IProcessTree, 
     }
 
     /*
-        On MacOS X, there's no procfs <http://www.osxbook.com/book/bonus/chapter11/procfs/>
-        instead you'd do it with the sysctl <http://search.cpan.org/src/DURIST/Proc-ProcessTable-0.42/os/darwin.c>
-        <http://developer.apple.com/documentation/Darwin/Reference/ManPages/man3/sysctl.3.html>
+        On MacOS X, there's no procfs <https://web.archive.org/web/20200513034043/https://osxbook.com/book/bonus/chapter11/procfs/>
+        instead you'd do it with sysctl <https://metacpan.org/release/DURIST/Proc-ProcessTable-0.42/source/os/darwin.c>
+        <https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sysctl.3.html>
 
         There's CLI but that doesn't seem to offer the access to per-process info
-        <http://developer.apple.com/documentation/Darwin/Reference/ManPages/man8/sysctl.8.html>
+        <https://web.archive.org/web/20090819232443/http://developer.apple.com/documentation/Darwin/Reference/ManPages/man8/sysctl.8.html>
 
 
 

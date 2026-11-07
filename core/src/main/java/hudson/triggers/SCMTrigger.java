@@ -27,7 +27,8 @@ package hudson.triggers;
 
 import static java.util.logging.Level.WARNING;
 
-import antlr.ANTLRException;
+import edu.umd.cs.findbugs.annotations.CheckForNull;
+import edu.umd.cs.findbugs.annotations.NonNull;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Extension;
 import hudson.Functions;
@@ -56,6 +57,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
 import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -75,12 +77,11 @@ import java.util.logging.Logger;
 import jenkins.model.Jenkins;
 import jenkins.model.RunAction2;
 import jenkins.scm.SCMDecisionHandler;
+import jenkins.security.XStreamNotDeserializable;
 import jenkins.triggers.SCMTriggerItem;
 import jenkins.util.SystemProperties;
 import net.sf.json.JSONObject;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.jelly.XMLOutput;
-import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.Symbol;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.DoNotUse;
@@ -89,8 +90,8 @@ import org.kohsuke.stapler.AncestorInPath;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 import org.kohsuke.stapler.QueryParameter;
-import org.kohsuke.stapler.StaplerRequest;
-import org.kohsuke.stapler.StaplerResponse;
+import org.kohsuke.stapler.StaplerRequest2;
+import org.kohsuke.stapler.StaplerResponse2;
 
 /**
  * {@link Trigger} that checks for SCM updates periodically.
@@ -108,7 +109,7 @@ public class SCMTrigger extends Trigger<Item> {
     private boolean ignorePostCommitHooks;
 
     @DataBoundConstructor
-    public SCMTrigger(String scmpoll_spec) throws ANTLRException {
+    public SCMTrigger(String scmpoll_spec) {
         super(scmpoll_spec);
     }
 
@@ -123,7 +124,7 @@ public class SCMTrigger extends Trigger<Item> {
      * @deprecated since 2.21
      */
     @Deprecated
-    public SCMTrigger(String scmpoll_spec, boolean ignorePostCommitHooks) throws ANTLRException {
+    public SCMTrigger(String scmpoll_spec, boolean ignorePostCommitHooks) {
         super(scmpoll_spec);
         this.ignorePostCommitHooks = ignorePostCommitHooks;
     }
@@ -204,7 +205,7 @@ public class SCMTrigger extends Trigger<Item> {
             return Collections.emptyList();
         }
 
-        return Collections.singleton(new SCMAction());
+        return Set.of(new SCMAction());
     }
 
     /**
@@ -293,6 +294,7 @@ public class SCMTrigger extends Trigger<Item> {
             return r;
         }
 
+        @NonNull
         @Override
         public String getDisplayName() {
             return Messages.SCMTrigger_DisplayName();
@@ -355,7 +357,7 @@ public class SCMTrigger extends Trigger<Item> {
         }
 
         @Override
-        public boolean configure(StaplerRequest req, JSONObject json) throws FormException {
+        public boolean configure(StaplerRequest2 req, JSONObject json) throws FormException {
             String t = json.optString("pollingThreadCount", null);
             if (doCheckPollingThreadCount(t).kind != FormValidation.Kind.OK) {
                 setPollingThreadCount(THREADS_DEFAULT);
@@ -379,7 +381,7 @@ public class SCMTrigger extends Trigger<Item> {
         public FormValidation doCheckScmpoll_spec(@QueryParameter String value,
                                                   @QueryParameter boolean ignorePostCommitHooks,
                                                   @AncestorInPath Item item) {
-            if (StringUtils.isBlank(value)) {
+            if (value == null || value.isBlank()) {
                 if (ignorePostCommitHooks) {
                     return FormValidation.ok(Messages.SCMTrigger_no_schedules_no_hooks());
                 } else {
@@ -415,8 +417,10 @@ public class SCMTrigger extends Trigger<Item> {
      * @since 1.376
      */
     public static class BuildAction implements RunAction2 {
+        @XStreamNotDeserializable
         private transient /*final*/ Run<?, ?> run;
         @Deprecated
+        @XStreamNotDeserializable
         @SuppressFBWarnings(value = "URF_UNREAD_PUBLIC_OR_PROTECTED_FIELD", justification = "for backward compatibility")
         public transient /*final*/ AbstractBuild build;
 
@@ -465,9 +469,9 @@ public class SCMTrigger extends Trigger<Item> {
         /**
          * Sends out the raw polling log output.
          */
-        public void doPollingLog(StaplerRequest req, StaplerResponse rsp) throws IOException {
+        public void doPollingLog(StaplerRequest2 req, StaplerResponse2 rsp) throws IOException {
             rsp.setContentType("text/plain;charset=UTF-8");
-            try (OutputStream os = rsp.getCompressedOutputStream(req);
+            try (OutputStream os = rsp.getOutputStream();
                  // Prevent jelly from flushing stream so Content-Length header can be added afterwards
                  FlushProofOutputStream out = new FlushProofOutputStream(os)) {
                 getPollingLogText().writeLogTo(0, out);
@@ -533,7 +537,7 @@ public class SCMTrigger extends Trigger<Item> {
         }
 
         public String getLog() throws IOException {
-            return Util.loadFile(getLogFile());
+            return Util.loadFile(getLogFile(), Charset.defaultCharset());
         }
 
         /**
@@ -607,7 +611,7 @@ public class SCMTrigger extends Trigger<Item> {
             try {
                 // to make sure that the log file contains up-to-date text,
                 // don't do buffering.
-                StreamTaskListener listener = new StreamTaskListener(getLogFile());
+                StreamTaskListener listener = new StreamTaskListener(getLogFile(), Charset.defaultCharset());
 
                 try {
                     PrintStream logger = listener.getLogger();
@@ -642,7 +646,7 @@ public class SCMTrigger extends Trigger<Item> {
             // note that job().poll(listener) should also check this
             SCMDecisionHandler veto = SCMDecisionHandler.firstShouldPollVeto(job);
             if (veto != null) {
-                try (StreamTaskListener listener = new StreamTaskListener(getLogFile())) {
+                try (StreamTaskListener listener = new StreamTaskListener(getLogFile(), Charset.defaultCharset())) {
                     listener.getLogger().println(
                             "Skipping polling on " + DateFormat.getDateTimeInstance().format(new Date())
                                     + " due to veto from " + veto);
@@ -709,13 +713,15 @@ public class SCMTrigger extends Trigger<Item> {
          * Only used while ths cause is in the queue.
          * Once attached to the build, we'll move this into a file to reduce the memory footprint.
          */
+        @CheckForNull
         private String pollingLog;
 
+        @XStreamNotDeserializable
         private transient Run run;
 
         public SCMTriggerCause(File logFile) throws IOException {
             // TODO: charset of this log file?
-            this(FileUtils.readFileToString(logFile));
+            this(Files.readString(Util.fileToPath(logFile), Charset.defaultCharset()));
         }
 
         public SCMTriggerCause(String pollingLog) {
@@ -741,7 +747,10 @@ public class SCMTrigger extends Trigger<Item> {
             this.run = build;
             try {
                 BuildAction a = new BuildAction(build);
-                FileUtils.writeStringToFile(a.getPollingLogFile(), pollingLog);
+                // pollingLog can be null when rebuilding a job that was initially triggered by polling.
+                if (pollingLog != null) {
+                    Files.writeString(Util.fileToPath(a.getPollingLogFile()), pollingLog, Charset.defaultCharset());
+                }
                 build.replaceAction(a);
             } catch (IOException e) {
                 LOGGER.log(WARNING, "Failed to persist the polling log", e);

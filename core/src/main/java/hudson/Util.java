@@ -24,6 +24,7 @@
 
 package hudson;
 
+import com.google.common.annotations.VisibleForTesting;
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.CheckReturnValue;
 import edu.umd.cs.findbugs.annotations.NonNull;
@@ -32,19 +33,22 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.model.TaskListener;
 import hudson.util.QuotedStringTokenizer;
 import hudson.util.VariableResolver;
+import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintStream;
+import java.io.PrintWriter;
 import java.io.Reader;
 import java.io.StringReader;
 import java.io.Writer;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.InetAddress;
@@ -55,7 +59,9 @@ import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.CopyOption;
 import java.nio.file.FileAlreadyExistsException;
@@ -64,6 +70,7 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
@@ -79,21 +86,24 @@ import java.text.NumberFormat;
 import java.text.ParseException;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.EnumSet;
+import java.util.HexFormat;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.MissingResourceException;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.ResourceBundle;
 import java.util.Set;
-import java.util.SimpleTimeZone;
 import java.util.StringTokenizer;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -104,14 +114,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
+import jenkins.model.Jenkins;
 import jenkins.util.MemoryReductionUtil;
 import jenkins.util.SystemProperties;
 import jenkins.util.io.PathRemover;
-import org.apache.commons.codec.digest.DigestUtils;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
-import org.apache.commons.io.output.NullOutputStream;
-import org.apache.commons.lang.time.FastDateFormat;
 import org.apache.tools.ant.BuildException;
 import org.apache.tools.ant.Project;
 import org.apache.tools.ant.taskdefs.Copy;
@@ -119,6 +126,7 @@ import org.apache.tools.ant.types.FileSet;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.StaplerRequest2;
 
 /**
  * Various utility methods that don't have more proper home.
@@ -247,15 +255,22 @@ public class Util {
         // contain unmappable and/or malformed byte sequences. We need to make
         // sure that in such cases, no CharacterCodingException is thrown.
         //
-        // One approach that cannot be used is to call Files.newBufferedReader()
-        // because there is a difference in how an InputStreamReader constructed
-        // from a Charset and the reader returned by Files.newBufferedReader()
-        // handle malformed and unmappable byte sequences for the specified
-        // encoding; the latter is more picky and will throw an exception.
+        // One approach that cannot be used is Files.newBufferedReader, which
+        // creates its CharsetDecoder with the default behavior of reporting
+        // malformed input and unmappable character errors. The implementation
+        // of InputStreamReader(InputStream, Charset) has the desired behavior
+        // of replacing malformed input and unmappable character errors, but
+        // this implementation is not specified in the API contract. Therefore,
+        // we explicitly use a decoder with the desired behavior.
         // See: https://issues.jenkins.io/browse/JENKINS-49060?focusedCommentId=325989&page=com.atlassian.jira.plugin.system.issuetabpanels:comment-tabpanel#comment-325989
-        try {
-            return FileUtils.readFileToString(logfile, charset);
-        } catch (FileNotFoundException e) {
+        CharsetDecoder decoder = charset.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE);
+        try (InputStream is = Files.newInputStream(Util.fileToPath(logfile));
+                Reader isr = new InputStreamReader(is, decoder);
+                Reader br = new BufferedReader(isr)) {
+            return IOUtils.toString(br);
+        } catch (NoSuchFileException e) {
             return "";
         } catch (Exception e) {
             throw new IOException("Failed to fully read " + logfile, e);
@@ -621,21 +636,19 @@ public class Util {
      *      The stream will be closed by this method at the end of this method.
      * @return
      *      32-char wide string
-     * @see DigestUtils#md5Hex(InputStream)
      */
     @NonNull
     public static String getDigestOf(@NonNull InputStream source) throws IOException {
-        try {
+        try (source) {
             MessageDigest md5 = getMd5();
-            DigestInputStream in = new DigestInputStream(source, md5);
-            // Note: IOUtils.copy() buffers the input internally, so there is no
-            // need to use a BufferedInputStream.
-            IOUtils.copy(in, NullOutputStream.NULL_OUTPUT_STREAM);
+            try (InputStream in = new DigestInputStream(source, md5); OutputStream out = OutputStream.nullOutputStream()) {
+                // Note: IOUtils.copy() buffers the input internally, so there is no
+                // need to use a BufferedInputStream.
+                IOUtils.copy(in, out);
+            }
             return toHexString(md5.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IOException("MD5 not installed", e);    // impossible
-        } finally {
-            source.close();
         }
         /* JENKINS-18178: confuses Maven 2 runner
         try {
@@ -697,13 +710,7 @@ public class Util {
 
     @NonNull
     public static String toHexString(@NonNull byte[] data, int start, int len) {
-        StringBuilder buf = new StringBuilder();
-        for (int i = 0; i < len; i++) {
-            int b = data[start + i] & 0xFF;
-            if (b < 16)    buf.append('0');
-            buf.append(Integer.toHexString(b));
-        }
-        return buf.toString();
+        return HexFormat.of().formatHex(data, start, len);
     }
 
     @NonNull
@@ -713,12 +720,7 @@ public class Util {
 
     @NonNull
     public static byte[] fromHexString(@NonNull String data) {
-        if (data.length() % 2 != 0)
-            throw new IllegalArgumentException("data must have an even number of hexadecimal digits");
-        byte[] r = new byte[data.length() / 2];
-        for (int i = 0; i < data.length(); i += 2)
-            r[i / 2] = (byte) Integer.parseInt(data.substring(i, i + 2), 16);
-        return r;
+        return HexFormat.of().parseHex(data);
     }
 
     /**
@@ -926,6 +928,8 @@ public class Util {
      * All characters outside numbers and letters without diacritic are encoded.
      * Note that slash ({@code /}) is encoded, so the given string should be a
      * single path component used in constructing a URL.
+     *
+     * @since 2.308
      */
     @NonNull
     public static String fullEncode(@NonNull String s) {
@@ -1073,11 +1077,11 @@ public class Util {
     /**
      * Copies a single file by using Ant.
      *
-     * @deprecated since TODO; use {@link Files#copy(Path, Path, CopyOption...)} directly
+     * @deprecated since 2.335; use {@link Files#copy(Path, Path, CopyOption...)} directly
      */
     @Deprecated
     @Restricted(NoExternalUse.class)
-    @RestrictedSince("TODO")
+    @RestrictedSince("2.335")
     public static void copyFile(@NonNull File src, @NonNull File dst) throws BuildException {
         Copy cp = new Copy();
         cp.setProject(new Project());
@@ -1110,7 +1114,7 @@ public class Util {
      */
     @CheckForNull
     public static String fixEmpty(@CheckForNull String s) {
-        if (s == null || s.length() == 0)    return null;
+        if (s == null || s.isEmpty())    return null;
         return s;
     }
 
@@ -1331,9 +1335,42 @@ public class Util {
     }
 
     /**
+     * Creates a symlink to targetPath at baseDir+symlinkPath; throws {@link IOException} on failure.
+     * No-op if an identical symlink already exists.
+     * <p>
+     *
+     * @param baseDir
+     *      Base directory to resolve the 'symlinkPath' parameter.
+     * @param targetPath
+     *      The file that the symlink should point to. Usually relative to the directory of the symlink but may instead be an absolute path.
+     * @param symlinkPath
+     *      Where to create a symlink in (relative to {@code baseDir})
+     */
+    @Restricted(NoExternalUse.class)
+    static void createSymlinkStrict(@NonNull File baseDir, @NonNull String targetPath,
+            @NonNull String symlinkPath, @NonNull TaskListener listener) throws IOException {
+        File fileForSymlink = new File(baseDir, symlinkPath);
+        Path pathForSymlink = fileToPath(fileForSymlink);
+        Path target = Paths.get(targetPath, MemoryReductionUtil.EMPTY_STRING_ARRAY);
+
+        if (Files.isSymbolicLink(pathForSymlink) && Files.readSymbolicLink(pathForSymlink).equals(target)) {
+            return;
+        }
+
+        try {
+            Files.createSymbolicLink(pathForSymlink, target);
+        } catch (IOException e) {
+            listener.error("Failed to create symlink " + pathForSymlink + " -> " + target);
+            throw e;
+        }
+    }
+
+    /**
      * Creates a symlink to targetPath at baseDir+symlinkPath.
      * <p>
      * If there's a prior symlink at baseDir+symlinkPath, it will be overwritten.
+     * <p>
+     * Prefer {@link #createSymlinkStrict(File, String, String, TaskListener)} for new call sites.
      *
      * @param baseDir
      *      Base directory to resolve the 'symlinkPath' parameter.
@@ -1487,13 +1524,41 @@ public class Util {
      */
     @CheckForNull
     public static Number tryParseNumber(@CheckForNull String numberStr, @CheckForNull Number defaultNumber) {
-        if (numberStr == null || numberStr.length() == 0) {
+        if (numberStr == null || numberStr.isEmpty()) {
             return defaultNumber;
         }
         try {
             return NumberFormat.getNumberInstance().parse(numberStr);
         } catch (ParseException e) {
             return defaultNumber;
+        }
+    }
+
+    // Keyed by (base, derived, methodName, paramTypes). Derived is held weakly so that plugin
+    // classloaders remain GC-eligible after unload. Results are stable for the lifetime of a
+    // classloader, so no invalidation is needed.
+    private static final ConcurrentHashMap<IsOverriddenCacheKey, Boolean> IS_OVERRIDDEN_CACHE =
+            new ConcurrentHashMap<>();
+
+    private record IsOverriddenCacheKey(
+            Class<?> base,
+            WeakReference<Class<?>> derivedRef,
+            String methodName,
+            List<Class<?>> types) {
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof IsOverriddenCacheKey other)) return false;
+            return base == other.base
+                    && derivedRef.get() == other.derivedRef.get()
+                    && methodName.equals(other.methodName)
+                    && types.equals(other.types);
+        }
+
+        @Override
+        public int hashCode() {
+            // Identity hash matches the identity comparison in equals.
+            return Objects.hash(base, System.identityHashCode(derivedRef.get()), methodName, types);
         }
     }
 
@@ -1510,6 +1575,10 @@ public class Util {
      *                                  does not contain the specified method.
      */
     public static boolean isOverridden(@NonNull Class<?> base, @NonNull Class<?> derived, @NonNull String methodName, @NonNull Class<?>... types) {
+        if (base == derived) {
+            // If base and derived are the same type, the method is not overridden by definition
+            return false;
+        }
         // If derived is not a subclass or implementor of base, it can't override any method
         // Technically this should also be triggered when base == derived, because it can't override its own method, but
         // the unit tests explicitly test for that as working.
@@ -1520,10 +1589,34 @@ public class Util {
         if (baseMethod == null) {
             throw new IllegalArgumentException("The specified method is not declared by the specified base class (" + base.getCanonicalName() + "), or it is private, static or final.");
         }
-        final Method derivedMethod = Util.getMethod(derived, base, methodName, types);
-        // the lookup will either return null or the base method when no override has been found (depending on whether
-        // the base is an interface)
-        return derivedMethod != null && derivedMethod != baseMethod;
+        IsOverriddenCacheKey key = new IsOverriddenCacheKey(
+                base, new WeakReference<>(derived), methodName, List.of(types));
+        return IS_OVERRIDDEN_CACHE.computeIfAbsent(key, k -> {
+            final Method derivedMethod = Util.getMethod(derived, base, methodName, types);
+            // the lookup will either return null or the base method when no override has been found (depending on
+            // whether the base is an interface)
+            return derivedMethod != null && derivedMethod != baseMethod;
+        });
+    }
+
+    /**
+     * Returns the number of entries in the {@link #isOverridden} result cache.
+     *
+     * @since 2.566
+     */
+    public static int isOverriddenCacheSize() {
+        return IS_OVERRIDDEN_CACHE.size();
+    }
+
+    /**
+     * Clears the {@link #isOverridden} result cache.
+     *
+     * @since 2.566
+     */
+    @VisibleForTesting
+    @Restricted(NoExternalUse.class)
+    public static void clearIsOverriddenCache() {
+        IS_OVERRIDDEN_CACHE.clear();
     }
 
     /**
@@ -1640,11 +1733,12 @@ public class Util {
     }
 
     /**
-     * Return true iff the parameter does not denote an absolute URI and not a scheme-relative URI.
+     * Return true if and only if the parameter does not denote an absolute URI and not a scheme-relative URI.
      * @since 2.3 / 1.651.2
      */
     public static boolean isSafeToRedirectTo(@NonNull String uri) {
-        return !isAbsoluteUri(uri) && !uri.startsWith("//");
+        String normalized = uri.replace("\t", "").replace("\n", "").replace("\r", "");
+        return !isAbsoluteUri(normalized) && !normalized.startsWith("\\") && !normalized.replace('\\', '/').contains("//");
     }
 
     /**
@@ -1780,7 +1874,16 @@ public class Util {
             if (Files.isDirectory(dir)) {
                 return dir;
             } else {
-                return Files.createDirectory(dir, attrs);
+                try {
+                    return Files.createDirectory(dir, attrs);
+                } catch (FileAlreadyExistsException e) {
+                    if (Files.isDirectory(dir)) {
+                        // a concurrent caller won the race
+                        return dir;
+                    } else {
+                        throw e;
+                    }
+                }
             }
         }
 
@@ -1788,7 +1891,15 @@ public class Util {
         for (Path name : parent.relativize(dir)) {
             child = child.resolve(name);
             if (!Files.isDirectory(child)) {
-                Files.createDirectory(child, attrs);
+                try {
+                    Files.createDirectory(child, attrs);
+                } catch (FileAlreadyExistsException e) {
+                    if (Files.isDirectory(child)) {
+                        // a concurrent caller won the race
+                    } else {
+                        throw e;
+                    }
+                }
             }
         }
 
@@ -1819,9 +1930,11 @@ public class Util {
     /**
      * Find the specific ancestor, or throw an exception.
      * Useful for an ancestor we know is inside the URL to ease readability
+     *
+     * @since 2.475
      */
     @Restricted(NoExternalUse.class)
-    public static @NonNull <T> T getNearestAncestorOfTypeOrThrow(@NonNull StaplerRequest request, @NonNull Class<T> clazz) {
+    public static @NonNull <T> T getNearestAncestorOfTypeOrThrow(@NonNull StaplerRequest2 request, @NonNull Class<T> clazz) {
         T t = request.findAncestorObject(clazz);
         if (t == null) {
             throw new IllegalArgumentException("No ancestor of type " + clazz.getName() + " in the request");
@@ -1829,11 +1942,31 @@ public class Util {
         return t;
     }
 
-    public static final FastDateFormat XS_DATETIME_FORMATTER = FastDateFormat.getInstance("yyyy-MM-dd'T'HH:mm:ss'Z'", new SimpleTimeZone(0, "GMT"));
+    /**
+     * @deprecated use {@link #getNearestAncestorOfTypeOrThrow(StaplerRequest2, Class)}
+     */
+    @Deprecated
+    @Restricted(NoExternalUse.class)
+    public static @NonNull <T> T getNearestAncestorOfTypeOrThrow(@NonNull StaplerRequest request, @NonNull Class<T> clazz) {
+        return getNearestAncestorOfTypeOrThrow(StaplerRequest.toStaplerRequest2(request), clazz);
+    }
 
-    // Note: RFC822 dates must not be localized!
-    public static final FastDateFormat RFC822_DATETIME_FORMATTER
-            = FastDateFormat.getInstance("EEE, dd MMM yyyy HH:mm:ss Z", Locale.US);
+    @Restricted(NoExternalUse.class)
+    public static void printRedirect(String contextPath, String redirectUrl, String message, PrintWriter out) {
+        out.printf(
+                "<html><head>" +
+                "<meta http-equiv='refresh' content='1;url=%1$s'/>" +
+                "<script id='redirect' data-redirect-url='%1$s' src='" +
+                contextPath + Jenkins.RESOURCE_PATH +
+                "/scripts/redirect.js'></script>" +
+                "</head>" +
+                "<body style='background-color:white; color:white;'>%n" +
+                "%2$s%n" +
+                "<!--%n", Functions.htmlAttributeEscape(redirectUrl), message);
+    }
+
+    public static final DateTimeFormatter XS_DATETIME_FORMATTER2 =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'").withZone(ZoneOffset.UTC);
 
     private static final Logger LOGGER = Logger.getLogger(Util.class.getName());
 
@@ -1899,5 +2032,39 @@ public class Util {
 
     private static PathRemover newPathRemover(@NonNull PathRemover.PathChecker pathChecker) {
         return PathRemover.newFilteredRobustRemover(pathChecker, DELETION_RETRIES, GC_AFTER_FAILED_DELETE, WAIT_BETWEEN_DELETION_RETRIES);
+    }
+
+    /**
+     * Returns SHA-256 Digest of input bytes
+     */
+    @Restricted(NoExternalUse.class)
+    public static byte[] getSHA256DigestOf(@NonNull byte[] input) {
+        try {
+                MessageDigest messageDigest = MessageDigest.getInstance("SHA-256");
+                messageDigest.update(input);
+                return messageDigest.digest();
+        } catch (NoSuchAlgorithmException noSuchAlgorithmException) {
+            throw new IllegalStateException("SHA-256 could not be instantiated, but is required to" +
+                    " be implemented by the language specification", noSuchAlgorithmException);
+        }
+    }
+
+    /**
+     * Returns Hex string of SHA-256 Digest of passed input
+     */
+    @Restricted(NoExternalUse.class)
+    public static String getHexOfSHA256DigestOf(byte[] input) {
+        //get hex string of sha 256 of payload
+        byte[] payloadDigest = Util.getSHA256DigestOf(input);
+        return (payloadDigest != null) ? Util.toHexString(payloadDigest) : null;
+    }
+
+
+    /**
+     * Returns Hex string of SHA-256 Digest of passed string
+     */
+    @Restricted(NoExternalUse.class)
+    public static String getHexOfSHA256DigestOf(String input) {
+        return getHexOfSHA256DigestOf(input.getBytes(StandardCharsets.UTF_8));
     }
 }

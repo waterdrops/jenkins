@@ -51,7 +51,6 @@ import hudson.tools.ToolInstaller;
 import hudson.tools.ToolProperty;
 import hudson.util.ArgumentListBuilder;
 import hudson.util.FormValidation;
-import hudson.util.NullStream;
 import hudson.util.StreamTaskListener;
 import hudson.util.VariableResolver;
 import hudson.util.VariableResolver.ByMap;
@@ -59,6 +58,7 @@ import hudson.util.VariableResolver.Union;
 import hudson.util.XStream2;
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -75,13 +75,13 @@ import jenkins.mvn.GlobalMavenConfig;
 import jenkins.mvn.GlobalSettingsProvider;
 import jenkins.mvn.SettingsProvider;
 import jenkins.security.MasterToSlaveCallable;
+import jenkins.security.XStreamDeserializable;
 import net.sf.json.JSONObject;
-import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.Symbol;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.StaplerRequest2;
 
 /**
  * Build by using Maven.
@@ -128,6 +128,7 @@ public class Maven extends Builder {
      *
      * @since 1.322
      */
+    @SuppressFBWarnings(value = "PA_PUBLIC_PRIMITIVE_ATTRIBUTE", justification = "Preserve API compatibility")
     public boolean usePrivateRepository;
 
     /**
@@ -331,13 +332,13 @@ public class Maven extends Builder {
 
             if (!S_PATTERN.matcher(targets).find()) { // check the given target/goals do not contain settings parameter already
                 String settingsPath = SettingsProvider.getSettingsRemotePath(getSettings(), build, listener);
-                if (StringUtils.isNotBlank(settingsPath)) {
+                if (settingsPath != null && !settingsPath.isBlank()) {
                     args.add("-s", settingsPath);
                 }
             }
             if (!GS_PATTERN.matcher(targets).find()) {
                 String settingsPath = GlobalSettingsProvider.getSettingsRemotePath(getGlobalSettings(), build, listener);
-                if (StringUtils.isNotBlank(settingsPath)) {
+                if (settingsPath != null && !settingsPath.isBlank()) {
                     args.add("-gs", settingsPath);
                 }
             }
@@ -420,9 +421,9 @@ public class Maven extends Builder {
      * @deprecated as of 1.286
      *      Use {@link jenkins.model.Jenkins#getDescriptorByType(Class)} to obtain the current instance.
      *      For compatibility, this field retains the last created {@link DescriptorImpl}.
-     *      TODO: fix sonar plugin that depends on this. That's the only plugin that depends on this field.
      */
     @Deprecated
+    @Restricted(NoExternalUse.class)
     public static DescriptorImpl DESCRIPTOR;
 
     @Extension @Symbol("maven")
@@ -446,6 +447,7 @@ public class Maven extends Builder {
             return super.getHelpFile(fieldName);
         }
 
+        @NonNull
         @Override
         public String getDisplayName() {
             return Messages.Maven_DisplayName();
@@ -479,7 +481,7 @@ public class Maven extends Builder {
         }
 
         @Override
-        public Builder newInstance(StaplerRequest req, JSONObject formData) throws FormException {
+        public Builder newInstance(StaplerRequest2 req, JSONObject formData) throws FormException {
             if (req == null) {
                 // This state is prohibited according to the Javadoc of the super method.
                 throw new FormException("Maven Build Step new instance method is called for null Stapler request. "
@@ -505,6 +507,7 @@ public class Maven extends Builder {
          * @deprecated since 2009-02-25.
          */
         @Deprecated // kept for backward compatibility - use getHome()
+        @XStreamDeserializable
         private transient String mavenHome;
 
         /**
@@ -559,7 +562,7 @@ public class Maven extends Builder {
             // olamy : but will add a dependency on maven in core -> so not so good
             String mavenVersion = launcher.getChannel().call(new GetMavenVersion(getHome()));
 
-            if (!mavenVersion.equals("")) {
+            if (!mavenVersion.isEmpty()) {
                 if (mavenReqVersion == MAVEN_20) {
                     if (mavenVersion.startsWith("2."))
                         return true;
@@ -664,7 +667,7 @@ public class Maven extends Builder {
          */
         public boolean getExists() {
             try {
-                return getExecutable(new LocalLauncher(new StreamTaskListener(new NullStream()))) != null;
+                return getExecutable(new LocalLauncher(new StreamTaskListener(OutputStream.nullOutputStream()))) != null;
             } catch (IOException | InterruptedException e) {
                 return false;
             }
@@ -684,6 +687,7 @@ public class Maven extends Builder {
 
         @Extension @Symbol("maven")
         public static class DescriptorImpl extends ToolDescriptor<MavenInstallation> {
+            @NonNull
             @Override
             public String getDisplayName() {
                 return "Maven";
@@ -691,7 +695,7 @@ public class Maven extends Builder {
 
             @Override
             public List<? extends ToolInstaller> getDefaultInstallers() {
-                return Collections.singletonList(new MavenInstaller(null));
+                return List.of(new MavenInstaller(null));
             }
 
             // overriding them for backward compatibility.
@@ -764,6 +768,7 @@ public class Maven extends Builder {
 
         @Extension @Symbol("maven")
         public static final class DescriptorImpl extends DownloadFromUrlInstaller.DescriptorImpl<MavenInstaller> {
+            @NonNull
             @Override
             public String getDisplayName() {
                 return Messages.InstallFromApache();

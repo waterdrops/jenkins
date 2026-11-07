@@ -24,6 +24,7 @@
 
 package hudson.util.io;
 
+import hudson.FilePath;
 import hudson.Util;
 import hudson.util.FileVisitor;
 import hudson.util.IOUtils;
@@ -31,11 +32,11 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
-import java.nio.file.LinkOption;
 import java.nio.file.OpenOption;
-import org.apache.commons.lang.StringUtils;
+import java.nio.file.attribute.BasicFileAttributes;
 import org.apache.tools.zip.Zip64Mode;
 import org.apache.tools.zip.ZipEntry;
 import org.apache.tools.zip.ZipOutputStream;
@@ -54,21 +55,21 @@ final class ZipArchiver extends Archiver {
     private final String prefix;
 
     ZipArchiver(OutputStream out) {
-        this(out, false, "");
+        this(out, "", Charset.defaultCharset());
     }
 
     // Restriction added for clarity, it's a package class, you should not use it outside of Jenkins core
     @Restricted(NoExternalUse.class)
-    ZipArchiver(OutputStream out, boolean failOnSymLink, String prefix) {
-        if (StringUtils.isBlank(prefix)) {
+    ZipArchiver(OutputStream out, String prefix, Charset filenamesEncoding, OpenOption... openOptions) {
+        this.openOptions = openOptions;
+        if (prefix == null || prefix.isBlank()) {
             this.prefix = "";
         } else {
             this.prefix = Util.ensureEndsWith(prefix, "/");
         }
 
         zip = new ZipOutputStream(out);
-        openOptions = failOnSymLink ? new LinkOption[]{LinkOption.NOFOLLOW_LINKS} : new OpenOption[0];
-        zip.setEncoding(System.getProperty("file.encoding"));
+        zip.setEncoding(filenamesEncoding.name());
         zip.setUseZip64(Zip64Mode.AsNeeded);
     }
 
@@ -81,28 +82,33 @@ final class ZipArchiver extends Archiver {
         // by forward-slashes (/)
         String relativePath = _relativePath.replace('\\', '/');
 
-        if (f.isDirectory()) {
+        BasicFileAttributes basicFileAttributes = Files.readAttributes(Util.fileToPath(f), BasicFileAttributes.class);
+        if (basicFileAttributes.isDirectory()) {
             ZipEntry dirZipEntry = new ZipEntry(this.prefix + relativePath + '/');
             // Setting this bit explicitly is needed by some unzipping applications (see JENKINS-3294).
             dirZipEntry.setExternalAttributes(BITMASK_IS_DIRECTORY);
             if (mode != -1)   dirZipEntry.setUnixMode(mode);
-            dirZipEntry.setTime(f.lastModified());
+            dirZipEntry.setTime(basicFileAttributes.lastModifiedTime().toMillis());
             zip.putNextEntry(dirZipEntry);
             zip.closeEntry();
         } else {
             ZipEntry fileZipEntry = new ZipEntry(this.prefix + relativePath);
             if (mode != -1)   fileZipEntry.setUnixMode(mode);
-            fileZipEntry.setTime(f.lastModified());
-            fileZipEntry.setSize(f.length());
-            zip.putNextEntry(fileZipEntry);
-            try (InputStream in = Files.newInputStream(f.toPath(), openOptions)) {
-                int len;
-                while ((len = in.read(buf)) >= 0)
-                    zip.write(buf, 0, len);
+            fileZipEntry.setTime(basicFileAttributes.lastModifiedTime().toMillis());
+            fileZipEntry.setSize(basicFileAttributes.size());
+            // Open the file before writing its ZIP header so an unreadable file does not leave an empty entry.
+            try (InputStream in = FilePath.openInputStream(f, openOptions)) {
+                zip.putNextEntry(fileZipEntry);
+                try {
+                    int len;
+                    while ((len = in.read(buf)) >= 0)
+                        zip.write(buf, 0, len);
+                } finally {
+                    zip.closeEntry();
+                }
             } catch (InvalidPathException e) {
                 throw new IOException(e);
             }
-            zip.closeEntry();
         }
         entriesWritten++;
     }

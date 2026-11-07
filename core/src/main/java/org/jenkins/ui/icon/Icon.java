@@ -31,7 +31,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.commons.jelly.JellyContext;
-import org.apache.commons.lang.StringUtils;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 
@@ -68,7 +67,7 @@ public class Icon {
     /**
      * Creates a {@link IconType#CORE core} icon.
      *
-     * @param classSpec The icon class names.
+     * @param classSpec The icon class names. Expected to start with `icon-`.
      * @param style     The icon style.
      */
     public Icon(String classSpec, String style) {
@@ -78,7 +77,7 @@ public class Icon {
     /**
      * Creates a {@link IconType#CORE core} icon.
      *
-     * @param classSpec The icon class names.
+     * @param classSpec The icon class names. Expected to start with `icon-`.
      * @param url       The icon image url.
      * @param style     The icon style.
      */
@@ -96,7 +95,7 @@ public class Icon {
     /**
      * Icon instance.
      *
-     * @param classSpec The icon class specification.
+     * @param classSpec The icon class specification. Expected to start with `icon-`.
      * @param url       The icon image url.
      * @param style     The icon style.
      * @param iconType  The icon type.
@@ -108,7 +107,7 @@ public class Icon {
     /**
      * Creates an icon.
      *
-     * @param classSpec The icon class names.
+     * @param classSpec The icon class names. Expected to start with `icon-`.
      * @param url       The icon image url.
      * @param style     The icon style.
      * @param iconFormat the {@link IconFormat}.
@@ -238,7 +237,7 @@ public class Icon {
         if (string == null) {
             return null;
         }
-        if (StringUtils.endsWithAny(string, SUPPORTED_FORMATS)) {
+        if (Arrays.stream(SUPPORTED_FORMATS).anyMatch(string::endsWith)) {
             string = string.substring(0, string.length() - 4);
         }
         return string.replace('_', '-');
@@ -280,7 +279,7 @@ public class Icon {
         // Trim all tokens first
         for (String classNameTok : classNameTokA) {
             String trimmedToken = classNameTok.trim();
-            if (trimmedToken.length() > 0) {
+            if (!trimmedToken.isEmpty()) {
                 classNameTokL.add(trimmedToken);
             }
         }

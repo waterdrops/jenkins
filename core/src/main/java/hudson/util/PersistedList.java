@@ -39,10 +39,7 @@ import java.io.UncheckedIOException;
 import java.lang.reflect.InvocationTargetException;
 import java.util.AbstractList;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
@@ -202,7 +199,7 @@ public class PersistedList<T> extends AbstractList<T> {
     }
 
     // TODO until https://github.com/jenkinsci/jenkins-test-harness/pull/243 is widely adopted:
-    private static final Set<String> IGNORED_CLASSES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList("org.jvnet.hudson.test.TestBuilder", "org.jvnet.hudson.test.TestNotifier")));
+    private static final Set<String> IGNORED_CLASSES = Set.of("org.jvnet.hudson.test.TestBuilder", "org.jvnet.hudson.test.TestNotifier");
     // (SingleFileSCM & ExtractResourceWithChangesSCM would also be nice to suppress, but they are not kept in a PersistedList.)
 
     private static boolean ignoreSerializationErrors(Object o) {
@@ -269,14 +266,24 @@ public class PersistedList<T> extends AbstractList<T> {
         CopyOnWriteList.ConverterImpl copyOnWriteListConverter;
 
         public ConverterImpl(Mapper mapper) {
+            this(mapper, null);
+        }
+
+        ConverterImpl(Mapper mapper, Class<?> elementType) {
             super(mapper);
-            copyOnWriteListConverter = new CopyOnWriteList.ConverterImpl(mapper());
+            copyOnWriteListConverter = new CopyOnWriteList.ConverterImpl(mapper(), elementType);
         }
 
         @Override
         public boolean canConvert(Class type) {
             // handle subtypes in case the onModified method is overridden.
             return PersistedList.class.isAssignableFrom(type);
+        }
+
+        static boolean canConvertRobust(Class<?> type) {
+            // Subtypes do not use this converter by default due to how AssociatedConverterImpl works
+            // So for RobustReflectionConverter#unmarshalField, expect class equality
+            return type == PersistedList.class;
         }
 
         @Override
@@ -307,16 +314,12 @@ public class PersistedList<T> extends AbstractList<T> {
                 throw x;
             } catch (InvocationTargetException e) {
                 Throwable t = e.getCause();
-                if (t instanceof RuntimeException) {
-                    throw (RuntimeException) t;
-                } else if (t instanceof IOException) {
-                    throw new UncheckedIOException((IOException) t);
-                } else if (t instanceof Exception) {
-                    throw new RuntimeException(t);
-                } else if (t instanceof Error) {
-                    throw (Error) t;
-                } else {
-                    throw new Error(e);
+                switch (t) {
+                    case RuntimeException runtimeException -> throw runtimeException;
+                    case IOException ioException -> throw new UncheckedIOException(ioException);
+                    case Exception exception -> throw new RuntimeException(t);
+                    case Error error -> throw error;
+                    case null, default -> throw new Error(e);
                 }
             }
         }

@@ -749,7 +749,7 @@ public abstract class SCM implements Describable<SCM>, ExtensionPoint {
 
     protected final String nullify(String s) {
         if (s == null)     return null;
-        if (s.trim().length() == 0)    return null;
+        if (s.trim().isEmpty())    return null;
         return s;
     }
 
@@ -782,8 +782,7 @@ public abstract class SCM implements Describable<SCM>, ExtensionPoint {
         for (SCMDescriptor<?> scmDescriptor : all()) {
             if (!scmDescriptor.isApplicable(project))    continue;
 
-            if (pd instanceof TopLevelItemDescriptor) {
-                TopLevelItemDescriptor apd = (TopLevelItemDescriptor) pd;
+            if (pd instanceof TopLevelItemDescriptor apd) {
                 if (!apd.isApplicable(scmDescriptor))    continue;
             }
 

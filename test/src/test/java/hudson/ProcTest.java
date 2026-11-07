@@ -1,8 +1,8 @@
 package hudson;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assume.assumeFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import hudson.Launcher.LocalLauncher;
 import hudson.Launcher.RemoteLauncher;
@@ -19,52 +19,58 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
 import jenkins.security.MasterToSlaveCallable;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.Issue;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
 /**
  * @author Kohsuke Kawaguchi
  */
 @Issue("JENKINS-7809")
-public class ProcTest {
+@WithJenkins
+class ProcTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
 
     /**
      * Makes sure that the output flushing and {@link ProcImpl#join()} is synced.
      */
     @Test
-    public void remoteProcOutputSync() throws Exception {
-        assumeFalse("TODO: Implement this test for Windows", Functions.isWindows());
+    void remoteProcOutputSync() throws Exception {
         VirtualChannel ch = createSlaveChannel();
 
         // keep the pipe fairly busy
         final Pipe p = Pipe.createRemoteToLocal();
         for (int i = 0; i < 10; i++)
             ch.callAsync(new ChannelFiller(p.getOut()));
-        new Thread() {
-            @Override
-            public void run() {
-                try {
-                    IOUtils.drain(p.getIn());
-                } catch (IOException e) {
-                }
+        new Thread(() -> {
+            try {
+                IOUtils.drain(p.getIn());
+            } catch (IOException e) {
             }
-        }.start();
+        }).start();
 
-        RemoteLauncher launcher = new RemoteLauncher(TaskListener.NULL, ch, true);
+        RemoteLauncher launcher = new RemoteLauncher(TaskListener.NULL, ch, !Functions.isWindows());
 
-        String str = "";
-        for (int i = 0; i < 256; i++)
-            str += "oxox";
+        StringBuilder str = new StringBuilder();
+        str.append("oxox".repeat(256));
 
         for (int i = 0; i < 1000; i++) {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            launcher.launch().cmds("echo", str).stdout(baos).join();
-            assertEquals(str, baos.toString(Charset.defaultCharset().name()).trim());
+            if (Functions.isWindows()) {
+                launcher.launch().cmds("cmd", "/c", "echo ", str.toString()).stdout(baos).join();
+            }
+            else {
+                launcher.launch().cmds("echo", str.toString()).stdout(baos).join();
+            }
+            assertEquals(str.toString(), baos.toString(Charset.defaultCharset()).trim());
         }
 
         ch.close();
@@ -98,14 +104,14 @@ public class ProcTest {
     }
 
     @Test
-    public void ioPumpingWithLocalLaunch() throws Exception {
-        assumeFalse("TODO: Implement this test for Windows", Functions.isWindows());
+    void ioPumpingWithLocalLaunch() throws Exception {
+        assumeFalse(Functions.isWindows(), "TODO: Implement this test for Windows");
         doIoPumpingTest(new LocalLauncher(new StreamTaskListener(System.out, Charset.defaultCharset())));
     }
 
     @Test
-    public void ioPumpingWithRemoteLaunch() throws Exception {
-        assumeFalse("TODO: Implement this test for Windows", Functions.isWindows());
+    void ioPumpingWithRemoteLaunch() throws Exception {
+        assumeFalse(Functions.isWindows(), "TODO: Implement this test for Windows");
         doIoPumpingTest(new RemoteLauncher(
                 new StreamTaskListener(System.out, Charset.defaultCharset()),
                 createSlaveChannel(), true));
@@ -116,7 +122,7 @@ public class ProcTest {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         l.launch().cmds(ECHO_BACK_CMD).stdin(new ByteArrayInputStream("Hello".getBytes(Charset.defaultCharset()))).stdout(out).join();
-        assertEquals("Hello", out.toString(Charset.defaultCharset().name()));
+        assertEquals("Hello", out.toString(Charset.defaultCharset()));
 
         Proc p = l.launch().cmds(ECHO_BACK_CMD).stdin(new ByteArrayInputStream("Hello".getBytes(Charset.defaultCharset()))).readStdout().start();
         p.join();

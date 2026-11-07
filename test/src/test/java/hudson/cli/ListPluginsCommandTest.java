@@ -27,27 +27,33 @@ package hudson.cli;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import jenkins.model.Jenkins;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.Issue;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
-public class ListPluginsCommandTest {
+@WithJenkins
+class ListPluginsCommandTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
 
     @Test
-    public void listPluginsExpectedUsage() {
+    void listPluginsExpectedUsage() {
         assertNull(j.jenkins.getPluginManager().getPlugin("token-macro"));
         CLICommandInvoker.Result result = new CLICommandInvoker(j, new ListPluginsCommand())
                 .invoke();
         assertThat(result, CLICommandInvoker.Matcher.succeeded());
-        assertThat(result, CLICommandInvoker.Matcher.hasNoStandardOutput());
+        assertThat(result, not(CLICommandInvoker.Matcher.hasNoStandardOutput()));
         assertThat(result.stdout(), not(containsString("token-macro")));
 
         assertThat(new CLICommandInvoker(j, new InstallPluginCommand()).
@@ -65,7 +71,7 @@ public class ListPluginsCommandTest {
 
     @Test
     @Issue("SECURITY-771")
-    public void onlyAccessibleForAdmin() {
+    void onlyAccessibleForAdmin() {
         CLICommandInvoker.Result result = new CLICommandInvoker(j, new ListPluginsCommand())
                 .authorizedTo(Jenkins.READ)
                 .invoke();

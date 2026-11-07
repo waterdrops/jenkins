@@ -27,13 +27,17 @@ package hudson.security;
 import com.google.common.annotations.VisibleForTesting;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.model.User;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.security.MessageDigest;
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import jenkins.model.Jenkins;
 import jenkins.security.HMACConfidentialKey;
 import jenkins.security.ImpersonatingUserDetailsService2;
@@ -46,6 +50,8 @@ import org.springframework.security.authentication.RememberMeAuthenticationProvi
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.codec.Utf8;
+import org.springframework.security.web.authentication.rememberme.AbstractRememberMeServices;
 import org.springframework.security.web.authentication.rememberme.InvalidCookieException;
 import org.springframework.security.web.authentication.rememberme.TokenBasedRememberMeServices;
 
@@ -58,9 +64,10 @@ import org.springframework.security.web.authentication.rememberme.TokenBasedReme
  * is never available in clear text.
  *
  * @author Kohsuke Kawaguchi
+ * @see TokenBasedRememberMeServices
  */
 @Restricted(NoExternalUse.class)
-public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices {
+public class TokenBasedRememberMeServices2 extends AbstractRememberMeServices {
 
     private static final Logger LOGGER = Logger.getLogger(TokenBasedRememberMeServices2.class.getName());
 
@@ -70,6 +77,24 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
     @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "for script console")
     public static /* Script Console modifiable */ boolean SKIP_TOO_FAR_EXPIRATION_DATE_CHECK =
             SystemProperties.getBoolean(TokenBasedRememberMeServices2.class.getName() + ".skipTooFarExpirationDateCheck");
+
+    /**
+     * Duration that a remember-me cookie stays valid, overriding Spring Security's 14-day default.
+     * Configured via the system property
+     * {@code hudson.security.TokenBasedRememberMeServices2.tokenValidity}; the value is parsed as a
+     * duration (e.g. {@code 14d}, {@code 60m}, or a bare number interpreted as seconds).
+     * When unset or not a positive duration, the Spring Security default is used.
+     * Values larger than {@link #MAX_TOKEN_VALIDITY} are capped to that maximum of 1-year.
+     */
+    @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "for script console")
+    public static /* Script Console modifiable */ Duration TOKEN_VALIDITY =
+            SystemProperties.getDuration(TokenBasedRememberMeServices2.class.getName() + ".tokenValidity", ChronoUnit.SECONDS);
+
+    /**
+     * Upper bound (1 year) for {@link #TOKEN_VALIDITY}. A configured validity larger than this
+     * is capped to this value to avoid effectively non-expiring remember-me cookies.
+     */
+    public static final Duration MAX_TOKEN_VALIDITY = Duration.ofDays(365);
 
     /**
      * Decorate {@link UserDetailsService} so that we can use information stored in
@@ -90,8 +115,7 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
         super(Jenkins.get().getSecretKey(), new ImpersonatingUserDetailsService2(userDetailsService));
     }
 
-    @Override
-    protected String makeTokenSignature(long tokenExpiryTime, String username, String password) {
+    protected String makeTokenSignature(long tokenExpiryTime, String username) {
         String userSeed;
         if (UserSeedProperty.DISABLE_USER_SEED) {
             userSeed = "no-seed";
@@ -106,11 +130,6 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
         }
         String token = String.join(":", username, Long.toString(tokenExpiryTime), userSeed, getKey());
         return MAC.mac(token);
-    }
-
-    @Override
-    protected String retrievePassword(Authentication successfulAuthentication) {
-        return "N/A";
     }
 
     @Override
@@ -138,13 +157,10 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
 
         // TODO is it really still necessary to reimplement all of the below, or could we simply override rememberMeRequested?
 
-        Objects.requireNonNull(successfulAuthentication.getPrincipal());
-        UserDetails.class.cast(successfulAuthentication.getPrincipal());
-
         long expiryTime = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(getTokenValiditySeconds());
-        String username = ((UserDetails) successfulAuthentication.getPrincipal()).getUsername();
+        String username = successfulAuthentication.getName();
 
-        String signatureValue = makeTokenSignature(expiryTime, username, ((UserDetails) successfulAuthentication.getPrincipal()).getPassword());
+        String signatureValue = makeTokenSignature(expiryTime, username);
         int tokenLifetime = calculateLoginLifetime(request, successfulAuthentication);
         setCookie(new String[] { username, Long.toString(expiryTime), signatureValue },
                 tokenLifetime, request, response);
@@ -153,6 +169,25 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
             logger.debug("Added remember-me cookie for user '" + username + "', expiry: '" + new Date(expiryTime)
                             + "'");
         }
+    }
+
+    /**
+     * Calculates the validity period in seconds for a newly generated remember-me login.
+     * After this period (from the current time) the remember-me login will be considered
+     * expired. This method allows customization based on request parameters supplied with
+     * the login or information in the {@code Authentication} object. The default value
+     * is just the token validity period property, {@code tokenValiditySeconds}.
+     * <p>
+     * The returned value will be used to work out the expiry time of the token and will
+     * also be used to set the {@code maxAge} property of the cookie.
+     *
+     * See SEC-485.
+     * @param request the request passed to onLoginSuccess
+     * @param authentication the successful authentication object.
+     * @return the lifetime in seconds.
+     */
+    protected int calculateLoginLifetime(HttpServletRequest request, Authentication authentication) {
+        return getTokenValiditySeconds();
     }
 
     @Override
@@ -165,8 +200,41 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
         if (j.isDisableRememberMe()) {
             cancelCookie(request, response);
             throw new InvalidCookieException("rememberMe is disabled");
-        } else {
-            return super.processAutoLoginCookie(cookieTokens, request, response);
+        }
+        if (cookieTokens.length != 3) {
+            throw new InvalidCookieException(
+                    "Cookie token did not contain 3" + " tokens, but contained '" + Arrays.asList(cookieTokens) + "'");
+        }
+        long tokenExpiryTime = getTokenExpiryTime(cookieTokens);
+        if (isTokenExpired(tokenExpiryTime)) {
+            throw new InvalidCookieException("Cookie token[1] has expired (expired on '" + new Date(tokenExpiryTime)
+                    + "'; current time is '" + new Date() + "')");
+        }
+        // Check the user exists. Defer lookup until after expiry time checked, to
+        // possibly avoid expensive database call.
+        UserDetails userDetails = getUserDetailsService().loadUserByUsername(cookieTokens[0]);
+        Objects.requireNonNull(userDetails, "UserDetailsService " + getUserDetailsService()
+                + " returned null for username " + cookieTokens[0] + ". " + "This is an interface contract violation");
+        // Check signature of token matches remaining details. Must do this after user
+        // lookup, as we need the DAO-derived password. If efficiency was a major issue,
+        // just add in a UserCache implementation, but recall that this method is usually
+        // only called once per HttpSession - if the token is valid, it will cause
+        // SecurityContextHolder population, whilst if invalid, will cause the cookie to
+        // be cancelled.
+        String expectedTokenSignature = makeTokenSignature(tokenExpiryTime, userDetails.getUsername());
+        if (!equals(expectedTokenSignature, cookieTokens[2])) {
+            throw new InvalidCookieException("Cookie token[2] contained signature '" + cookieTokens[2]
+                    + "' but expected '" + expectedTokenSignature + "'");
+        }
+        return userDetails;
+    }
+
+    private long getTokenExpiryTime(String[] cookieTokens) {
+        try {
+            return Long.parseLong(cookieTokens[1]);
+        } catch (NumberFormatException nfe) {
+            throw new InvalidCookieException(
+                    "Cookie token[1] did not contain a valid number (contained '" + cookieTokens[1] + "')");
         }
     }
 
@@ -187,10 +255,9 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
     }
 
     /**
-     * In addition to the expiration requested by the super class, we also check the expiration is not too far in the future.
+     * In addition to the expiration requested by {@link TokenBasedRememberMeServices#isTokenExpired}, we also check the expiration is not too far in the future.
      * Especially to detect maliciously crafted cookie.
      */
-    @Override
     protected boolean isTokenExpired(long tokenExpiryTimeMs) {
         long nowMs = System.currentTimeMillis();
         long maxExpirationMs = TimeUnit.SECONDS.toMillis(getTokenValiditySeconds()) + nowMs;
@@ -208,9 +275,20 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
         return false;
     }
 
-    @VisibleForTesting
     @Override
     protected int getTokenValiditySeconds() {
+        Duration configured = TOKEN_VALIDITY;
+        if (configured != null) {
+            long seconds = configured.toSeconds();
+            if (seconds <= 0) {
+                LOGGER.log(Level.WARNING, "Ignoring non-positive remember-me token validity ({0}); using the default", configured);
+            } else if (seconds > MAX_TOKEN_VALIDITY.toSeconds()) {
+                LOGGER.log(Level.WARNING, "Capping remember-me token validity ({0}) to the maximum of {1}", new Object[] {configured, MAX_TOKEN_VALIDITY});
+                return (int) MAX_TOKEN_VALIDITY.toSeconds();
+            } else {
+                return (int) seconds;
+            }
+        }
         return super.getTokenValiditySeconds();
     }
 
@@ -218,6 +296,19 @@ public class TokenBasedRememberMeServices2 extends TokenBasedRememberMeServices 
     @Override
     protected String getCookieName() {
         return super.getCookieName();
+    }
+
+    /**
+     * Constant time comparison to prevent against timing attacks.
+     */
+    private static boolean equals(String expected, String actual) {
+        byte[] expectedBytes = bytesUtf8(expected);
+        byte[] actualBytes = bytesUtf8(actual);
+        return MessageDigest.isEqual(expectedBytes, actualBytes);
+    }
+
+    private static byte[] bytesUtf8(String s) {
+        return s != null ? Utf8.encode(s) : null;
     }
 
     /**

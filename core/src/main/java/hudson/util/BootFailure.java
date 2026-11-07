@@ -2,19 +2,20 @@ package hudson.util;
 
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import hudson.WebAppMain;
+import jakarta.servlet.ServletContext;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
-import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.servlet.ServletContext;
+import jenkins.model.Jenkins;
 import jenkins.util.groovy.GroovyHookScript;
 import org.kohsuke.stapler.WebApp;
 
@@ -51,6 +52,7 @@ public abstract class BootFailure extends ErrorObject {
                 .bind("servletContext", context)
                 .bind("attempts", loadAttempts(home))
                 .run();
+        Jenkins.get().getLifecycle().onBootFailure(this);
     }
 
     /**
@@ -64,7 +66,8 @@ public abstract class BootFailure extends ErrorObject {
                 if (f.exists()) {
                     try (BufferedReader failureFileReader = Files.newBufferedReader(f.toPath(), Charset.defaultCharset())) {
                         String line;
-                        DateFormat df = DateFormat.getDateInstance();
+                        // WebAppMain.recordBootAttempt uses Date.toString when writing, so that is the format we must parse.
+                        SimpleDateFormat df = new SimpleDateFormat("EEE MMM dd HH:mm:ss zzz yyyy");
                         while ((line = failureFileReader.readLine()) != null) {
                             try {
                                 dates.add(df.parse(line));

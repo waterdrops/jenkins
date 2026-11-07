@@ -24,70 +24,66 @@
 
 package jenkins.slaves.restarter;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
-import hudson.Proc;
+import hudson.Functions;
 import hudson.model.Slave;
 import hudson.slaves.DumbSlave;
-import hudson.slaves.JNLPLauncher;
-import hudson.slaves.SlaveComputer;
-import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import jenkins.security.MasterToSlaveCallable;
-import org.apache.commons.io.FileUtils;
-import org.apache.tools.ant.util.JavaEnvUtils;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.jvnet.hudson.test.Issue;
-import org.jvnet.hudson.test.JenkinsSessionRule;
-import org.jvnet.hudson.test.LoggerRule;
+import org.jvnet.hudson.test.LogRecorder;
+import org.jvnet.hudson.test.junit.jupiter.InboundAgentExtension;
+import org.jvnet.hudson.test.junit.jupiter.JenkinsSessionExtension;
 
-public class JnlpSlaveRestarterInstallerTest {
+class JnlpSlaveRestarterInstallerTest {
 
-    @Rule
-    public JenkinsSessionRule rr = new JenkinsSessionRule();
+    @RegisterExtension
+    private final JenkinsSessionExtension rr = new JenkinsSessionExtension();
 
-    @Rule
-    public TemporaryFolder tmp = new TemporaryFolder();
+    @RegisterExtension
+    private final InboundAgentExtension inboundAgents = new InboundAgentExtension();
 
-    @Rule
-    public LoggerRule logging = new LoggerRule().record(JnlpSlaveRestarterInstaller.class, Level.FINE).capture(10);
+    private final LogRecorder logging = new LogRecorder().record(JnlpSlaveRestarterInstaller.class, Level.FINE).capture(10);
 
     @Issue("JENKINS-19055")
     @Test
-    public void tcpReconnection() throws Throwable {
+    void tcpReconnection() throws Throwable {
+        // TODO Enable when test is reliable on Windows agents of ci.jenkins.io
+        // When builds switched from ACI containers to virtual machines, this test consistently failed
+        // When the test is run on local Windows computers, it passes
+        // Disable the test on ci.jenkins.io and friends when running Windows
+        // Do not disable for Windows developers generally
+        assumeFalse(Functions.isWindows() && System.getenv("CI") != null, "TODO: Test fails on Windows VM");
         reconnection(false);
     }
 
     @Issue("JENKINS-66446")
     @Test
-    public void webSocketReconnection() throws Throwable {
+    void webSocketReconnection() throws Throwable {
+        // TODO Enable when test is reliable on Windows agents of ci.jenkins.io
+        // When builds switched from ACI containers to virtual machines, this test consistently failed
+        // When the test is run on local Windows computers, it passes
+        // Disable the test on ci.jenkins.io and friends when running Windows
+        // Do not disable for Windows developers generally
+        assumeFalse(Functions.isWindows() && System.getenv("CI") != null, "TODO: Test fails on Windows VM");
         reconnection(true);
     }
 
     private void reconnection(boolean webSocket) throws Throwable {
-        AtomicReference<Proc> proc = new AtomicReference<>();
         AtomicBoolean canWork = new AtomicBoolean();
-        try {
             rr.then(r -> {
-                JNLPLauncher launcher = new JNLPLauncher(true);
-                launcher.setWebSocket(webSocket);
-                DumbSlave s = new DumbSlave("remote", tmp.newFolder("agent").getAbsolutePath(), launcher);
-                r.jenkins.addNode(s);
-                String secret = ((SlaveComputer) s.toComputer()).getJnlpMac();
-                File slaveJar = tmp.newFile();
-                FileUtils.copyURLToFile(new Slave.JnlpJar("agent.jar").getURL(), slaveJar);
-                proc.set(r.createLocalLauncher().launch().cmds(
-                    JavaEnvUtils.getJreExecutable("java"), "-jar", slaveJar.getAbsolutePath(),
-                    "-jnlpUrl", r.getURL() + "computer/remote/jenkins-agent.jnlp",
-                    "-secret", secret
-                ).stdout(System.out).start());
-                r.waitOnline(s);
+                InboundAgentExtension.Options.Builder builder = InboundAgentExtension.Options.newBuilder().name("remote");
+                if (webSocket) {
+                    builder.webSocket();
+                }
+                Slave s = inboundAgents.createAgent(r, builder.build());
                 assertEquals(1, s.getChannel().call(new JVMCount()).intValue());
-                while (!logging.getMessages().stream().anyMatch(msg -> msg.contains("Effective SlaveRestarter on remote:"))) {
+                while (logging.getMessages().stream().noneMatch(msg -> msg.contains("Effective SlaveRestarter on remote:"))) {
                     Thread.sleep(100);
                 }
                 // Likely true on Unix, likely false on Windows (not under winsw):
@@ -96,13 +92,12 @@ public class JnlpSlaveRestarterInstallerTest {
             rr.then(r -> {
                 DumbSlave s = (DumbSlave) r.jenkins.getNode("remote");
                 r.waitOnline(s);
-                assertEquals(canWork.get() ? 1 : 2, s.getChannel().call(new JVMCount()).intValue());
+                try {
+                    assertEquals(canWork.get() ? 1 : 2, s.getChannel().call(new JVMCount()).intValue());
+                } finally {
+                    inboundAgents.stop(r, s.getNodeName());
+                }
             });
-        } finally {
-            if (proc.get() != null) {
-                proc.get().kill();
-            }
-        }
     }
 
     private static final class JVMCount extends MasterToSlaveCallable<Integer, RuntimeException> {

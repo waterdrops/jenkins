@@ -26,7 +26,7 @@ package jenkins.cli;
 
 import static java.util.Arrays.asList;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.core.IsEqual.equalTo;
+import static org.hamcrest.Matchers.equalTo;
 
 import hudson.cli.CLICommand;
 import hudson.cli.CLICommandInvoker;
@@ -35,31 +35,36 @@ import hudson.model.FreeStyleProject;
 import hudson.model.Item;
 import hudson.model.Result;
 import java.io.IOException;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import jenkins.model.Jenkins;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.MockAuthorizationStrategy;
 import org.jvnet.hudson.test.SleepBuilder;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
-public class StopBuildsCommandTest {
-
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+@WithJenkins
+class StopBuildsCommandTest {
 
     private static final String TEST_JOB_NAME = "jobName";
     private static final String TEST_JOB_NAME_2 = "jobName2";
     private static final String LN = System.lineSeparator();
 
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
+
     @Test
-    public void shouldStopLastBuild() throws Exception {
+    void shouldStopLastBuild() throws Exception {
         final FreeStyleProject project = createLongRunningProject(TEST_JOB_NAME);
         FreeStyleBuild build = project.scheduleBuild2(0).waitForStart();
         j.waitForMessage("Sleeping", build);
-        final String stdout = runWith(Collections.singletonList(TEST_JOB_NAME)).stdout();
+        final String stdout = runWith(List.of(TEST_JOB_NAME)).stdout();
 
         assertThat(stdout, equalTo("Build '#1' stopped for job 'jobName'" + LN));
 
@@ -67,18 +72,18 @@ public class StopBuildsCommandTest {
     }
 
     @Test
-    public void shouldNotStopEndedBuild() throws Exception {
+    void shouldNotStopEndedBuild() throws Exception {
         final FreeStyleProject project = j.createFreeStyleProject(TEST_JOB_NAME);
         project.getBuildersList().add(new SleepBuilder(TimeUnit.SECONDS.toMillis(1)));
         j.buildAndAssertSuccess(project);
 
-        final String out = runWith(Collections.singletonList(TEST_JOB_NAME)).stdout();
+        final String out = runWith(List.of(TEST_JOB_NAME)).stdout();
 
         assertThat(out, equalTo("No builds stopped" + LN));
     }
 
     @Test
-    public void shouldStopSeveralWorkingBuilds() throws Exception {
+    void shouldStopSeveralWorkingBuilds() throws Exception {
         final FreeStyleProject project = createLongRunningProject(TEST_JOB_NAME);
         project.setConcurrentBuild(true);
 
@@ -87,7 +92,7 @@ public class StopBuildsCommandTest {
         FreeStyleBuild b2 = project.scheduleBuild2(0).waitForStart();
         j.waitForMessage("Sleeping", b2);
 
-        final String stdout = runWith(Collections.singletonList(TEST_JOB_NAME)).stdout();
+        final String stdout = runWith(List.of(TEST_JOB_NAME)).stdout();
 
         assertThat(stdout, equalTo("Build '#2' stopped for job 'jobName'" + LN +
                 "Build '#1' stopped for job 'jobName'" + LN));
@@ -96,36 +101,36 @@ public class StopBuildsCommandTest {
     }
 
     @Test
-    public void shouldReportNotSupportedType() throws Exception {
+    void shouldReportNotSupportedType() throws Exception {
         final String testFolderName = "folder";
         j.createFolder(testFolderName);
 
-        final String stderr = runWith(Collections.singletonList(testFolderName)).stderr();
+        final String stderr = runWith(List.of(testFolderName)).stderr();
 
         assertThat(stderr, equalTo(LN + "ERROR: Job not found: 'folder'" + LN));
     }
 
     @Test
-    public void shouldDoNothingIfJobNotFound() throws Exception {
-        final String stderr = runWith(Collections.singletonList(TEST_JOB_NAME)).stderr();
+    void shouldDoNothingIfJobNotFound() {
+        final String stderr = runWith(List.of(TEST_JOB_NAME)).stderr();
 
         assertThat(stderr, equalTo(LN + "ERROR: Job not found: 'jobName'" + LN));
     }
 
     @Test
-    public void shouldStopWorkingBuildsInSeveralJobs() throws Exception {
+    void shouldStopWorkingBuildsInSeveralJobs() throws Exception {
         final List<String> inputJobNames = asList(TEST_JOB_NAME, TEST_JOB_NAME_2);
         setupAndAssertTwoBuildsStop(inputJobNames);
     }
 
     @Test
-    public void shouldFilterJobDuplicatesInInput() throws Exception {
+    void shouldFilterJobDuplicatesInInput() throws Exception {
         final List<String> inputNames = asList(TEST_JOB_NAME, TEST_JOB_NAME, TEST_JOB_NAME_2);
         setupAndAssertTwoBuildsStop(inputNames);
     }
 
     @Test
-    public void shouldReportBuildStopError() throws Exception {
+    void shouldReportBuildStopError() throws Exception {
         final FreeStyleProject project = createLongRunningProject(TEST_JOB_NAME);
 
         j.jenkins.setSecurityRealm(j.createDummySecurityRealm());
@@ -136,7 +141,7 @@ public class StopBuildsCommandTest {
         FreeStyleBuild build = project.scheduleBuild2(0).waitForStart();
         j.waitForMessage("Sleeping", build);
 
-        final String stdout = runWith(Collections.singletonList(TEST_JOB_NAME)).stdout();
+        final String stdout = runWith(List.of(TEST_JOB_NAME)).stdout();
 
         assertThat(stdout,
                 equalTo("Exception occurred while trying to stop build '#1' for job 'jobName'. " +
@@ -148,7 +153,7 @@ public class StopBuildsCommandTest {
     }
 
     @Test
-    public void shouldStopSecondJobEvenIfFirstStopFailed() throws Exception {
+    void shouldStopSecondJobEvenIfFirstStopFailed() throws Exception {
         final FreeStyleProject project = createLongRunningProject(TEST_JOB_NAME_2);
 
         final FreeStyleProject restrictedProject = createLongRunningProject(TEST_JOB_NAME);
@@ -178,10 +183,32 @@ public class StopBuildsCommandTest {
         j.assertBuildStatus(Result.ABORTED, j.waitForCompletion(b2));
     }
 
-    private CLICommandInvoker.Result runWith(final List<String> jobNames) throws Exception {
+    @Test
+    void shouldStopEarlierBuildsEvenIfLatestComplete() throws Exception {
+        final FreeStyleProject project = createLongRunningProject(TEST_JOB_NAME);
+        project.setConcurrentBuild(true);
+        j.jenkins.setNumExecutors(3);
+
+        FreeStyleBuild b1 = project.scheduleBuild2(0).waitForStart();
+        j.waitForMessage("Sleeping", b1);
+        FreeStyleBuild b2 = project.scheduleBuild2(0).waitForStart();
+        j.waitForMessage("Sleeping", b2);
+
+        project.getBuildersList().clear();
+        FreeStyleBuild b3 = j.buildAndAssertSuccess(project);
+
+        final String stdout = runWith(List.of(TEST_JOB_NAME)).stdout();
+
+        assertThat(stdout, equalTo("Build '#2' stopped for job 'jobName'" + LN +
+                "Build '#1' stopped for job 'jobName'" + LN));
+        j.assertBuildStatus(Result.ABORTED, j.waitForCompletion(b1));
+        j.assertBuildStatus(Result.ABORTED, j.waitForCompletion(b2));
+    }
+
+    private CLICommandInvoker.Result runWith(final List<String> jobNames) {
         CLICommand cmd = new StopBuildsCommand();
         CLICommandInvoker invoker = new CLICommandInvoker(j, cmd);
-        return invoker.invokeWithArgs(jobNames.toArray(new String[jobNames.size()]));
+        return invoker.invokeWithArgs(jobNames.toArray(new String[0]));
     }
 
     private void setupAndAssertTwoBuildsStop(final List<String> inputNames) throws Exception {

@@ -42,6 +42,7 @@ import hudson.model.Hudson;
 import jakarta.annotation.PostConstruct;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.AnnotatedElement;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -179,8 +180,8 @@ public abstract class ExtensionFinder implements ExtensionPoint {
      * from here.
      *
      * <p>
-     * See https://bugs.openjdk.java.net/browse/JDK-4993813 for how to force a class initialization.
-     * Also see http://kohsuke.org/2010/09/01/deadlock-that-you-cant-avoid/ for how class initialization
+     * See <a href="https://bugs.openjdk.org/browse/JDK-4993813">JDK-4993813</a> for how to force a class initialization.
+     * Also see <a href="https://kohsuke.org/2010/09/01/deadlock-that-you-cant-avoid/">this blog post</a> for how class initialization
      * can results in a dead lock.
      */
     public void scout(Class extensionType, Hudson hudson) {
@@ -192,6 +193,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
             super(Extension.class);
         }
 
+        @SuppressWarnings("deprecation")
         @Override
         protected boolean isOptional(Extension annotation) {
             return annotation.optional();
@@ -297,9 +299,11 @@ public abstract class ExtensionFinder implements ExtensionPoint {
         }
 
         private void refreshExtensionAnnotations() {
+            LOGGER.finer(() -> "refreshExtensionAnnotations()");
             for (ExtensionComponent<GuiceExtensionAnnotation> ec : moduleFinder.find(GuiceExtensionAnnotation.class, Hudson.getInstance())) {
                 GuiceExtensionAnnotation gea = ec.getInstance();
                 extensionAnnotations.put(gea.annotationType, gea);
+                LOGGER.finer(() -> "found " + gea.getClass());
             }
         }
 
@@ -327,6 +331,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
          */
         @Override
         public synchronized ExtensionComponentSet refresh() throws ExtensionRefreshException {
+            LOGGER.finer(() -> "refresh()");
             refreshExtensionAnnotations();
             // figure out newly discovered sezpoz components
             List<IndexItem<?, Object>> delta = new ArrayList<>();
@@ -498,10 +503,51 @@ public abstract class ExtensionFinder implements ExtensionPoint {
                          */
                         cc.getGenericSuperclass();
                         cc.getGenericInterfaces();
-                        cc.getDeclaredConstructors();
-                        cc.getDeclaredMethods();
+
+                        /*
+                         * See com.google.inject.spi.InjectionPoint#forConstructorOf(TypeLiteral, boolean)
+                         * and com.google.inject.spi.InjectionPoint(TypeLiteral, Constructor)
+                         */
+                        boolean foundInjectableConstructor = false;
+                        for (Constructor constructor : cc.getDeclaredConstructors()) {
+                            if (constructor.isAnnotationPresent(javax.inject.Inject.class)
+                                    || constructor.isAnnotationPresent(jakarta.inject.Inject.class)
+                                    || constructor.isAnnotationPresent(com.google.inject.Inject.class)) {
+                                constructor.getAnnotatedParameterTypes();
+                                constructor.getParameterAnnotations();
+                                foundInjectableConstructor = true;
+                            }
+                        }
+                        if (!foundInjectableConstructor) {
+                            Constructor<?> noArg = null;
+                            try {
+                                noArg = cc.getDeclaredConstructor();
+                            } catch (NoSuchMethodException e) {
+                                // ignore
+                            }
+                            if (noArg != null) {
+                                noArg.getAnnotatedParameterTypes();
+                                noArg.getParameterAnnotations();
+                            }
+                        }
+
+                        // See com.google.inject.spi.InjectionPoint(TypeLiteral, Method, boolean)
+                        for (Method method : cc.getDeclaredMethods()) {
+                            if (method.isAnnotationPresent(javax.inject.Inject.class)
+                                    || method.isAnnotationPresent(jakarta.inject.Inject.class)
+                                    || method.isAnnotationPresent(com.google.inject.Inject.class)) {
+                                method.getAnnotatedParameterTypes();
+                                method.getParameterAnnotations();
+                            }
+                        }
+
+                        // See com.google.inject.spi.InjectionPoint(TypeLiteral, Field, boolean)
                         for (Field f : cc.getDeclaredFields()) {
-                            if (f.getAnnotation(javax.inject.Inject.class) != null || f.getAnnotation(com.google.inject.Inject.class) != null) {
+                            if (f.isAnnotationPresent(javax.inject.Inject.class)
+                                    || f.isAnnotationPresent(jakarta.inject.Inject.class)
+                                    || f.isAnnotationPresent(com.google.inject.Inject.class)) {
+                                f.getAnnotations();
+                                f.getAnnotatedType().getAnnotations();
                                 resolve(f.getType(), encountered);
                             }
                         }
@@ -560,7 +606,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
             }
 
             public List<IndexItem<?, Object>> getLoadedIndex() {
-                return Collections.unmodifiableList(new ArrayList<>(loadedIndex));
+                return List.copyOf(loadedIndex);
             }
 
             @Override
@@ -582,7 +628,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
                             .flatMap(Collection::stream)
                             .filter(m -> m.getAnnotation(PostConstruct.class) != null || m.getAnnotation(javax.annotation.PostConstruct.class) != null)
                             .findFirst()
-                            .ifPresent(method -> methods.add(0, method));
+                            .ifPresent(methods::addFirst);
                     c = c.getSuperclass();
                 }
 
@@ -645,7 +691,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
             // 5. dead lock
             if (indices == null) {
                 ClassLoader cl = Jenkins.get().getPluginManager().uberClassLoader;
-                indices = Collections.unmodifiableList(StreamSupport.stream(Index.load(Extension.class, Object.class, cl).spliterator(), false).collect(Collectors.toList()));
+                indices = StreamSupport.stream(Index.load(Extension.class, Object.class, cl).spliterator(), false).collect(Collectors.toUnmodifiableList());
             }
             return indices;
         }
@@ -734,6 +780,7 @@ public abstract class ExtensionFinder implements ExtensionPoint {
             }
         }
 
+        @SuppressWarnings("deprecation")
         private Level logLevel(IndexItem<Extension, Object> item) {
             return item.annotation().optional() ? Level.FINE : Level.WARNING;
         }
@@ -741,16 +788,12 @@ public abstract class ExtensionFinder implements ExtensionPoint {
 
     private static Class<?> getClassFromIndex(IndexItem<Extension, Object> item) throws InstantiationException {
         AnnotatedElement e = item.element();
-        Class<?> extType;
-        if (e instanceof Class) {
-            extType = (Class) e;
-        } else if (e instanceof Field) {
-            extType = ((Field) e).getType();
-        } else if (e instanceof Method) {
-            extType = ((Method) e).getReturnType();
-        } else {
-            throw new AssertionError();
-        }
+        Class<?> extType = switch (e) {
+            case Class aClass -> aClass;
+            case Field field -> field.getType();
+            case Method method -> method.getReturnType();
+            case null, default -> throw new AssertionError();
+        };
         return extType;
     }
 

@@ -35,6 +35,7 @@ import java.util.ListIterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 
@@ -177,7 +178,7 @@ public class Iterators {
     public static <T> Iterable<T> reverse(final List<T> lst) {
         return () -> {
             final ListIterator<T> itr = lst.listIterator(lst.size());
-            return new Iterator<T>() {
+            return new Iterator<>() {
                 @Override
                 public boolean hasNext() {
                     return itr.hasPrevious();
@@ -205,7 +206,7 @@ public class Iterators {
     public static <T> Iterable<T> wrap(final Iterable<T> base) {
         return () -> {
             final Iterator<T> itr = base.iterator();
-            return new Iterator<T>() {
+            return new Iterator<>() {
                 @Override
                 public boolean hasNext() {
                     return itr.hasNext();
@@ -236,7 +237,7 @@ public class Iterators {
         final int size = (end - start) / step;
         if (size < 0)  throw new IllegalArgumentException("List size is negative");
 
-        return new AbstractList<Integer>() {
+        return new AbstractList<>() {
             @Override
             public Integer get(int index) {
                 if (index < 0 || index >= size)
@@ -289,7 +290,7 @@ public class Iterators {
      */
     @SuppressWarnings("unchecked")
     public static <U, T extends U> Iterator<T> subType(Iterator<U> itr, final Class<T> type) {
-        return (Iterator) new FilterIterator<U>(itr) {
+        return (Iterator) new FilterIterator<>(itr) {
             @Override
             protected boolean filter(U u) {
                 return type.isInstance(u);
@@ -301,7 +302,7 @@ public class Iterators {
      * Creates a read-only mutator that disallows {@link Iterator#remove()}.
      */
     public static <T> Iterator<T> readOnly(final Iterator<T> itr) {
-        return new Iterator<T>() {
+        return new Iterator<>() {
             @Override
             public boolean hasNext() {
                 return itr.hasNext();
@@ -327,6 +328,18 @@ public class Iterators {
     }
 
     /**
+     * Wraps another iterator and map iterable objects.
+     */
+    public static <T, U> Iterator<U> map(final Iterator<T> itr, Function<T, U> mapper) {
+        return new AdaptedIterator<>(itr) {
+            @Override
+            protected U adapt(T item) {
+                return mapper.apply(item);
+            }
+        };
+    }
+
+    /**
      * Returns an {@link Iterable} that iterates over all the given {@link Iterable}s.
      *
      * <p>
@@ -334,7 +347,7 @@ public class Iterators {
      */
     @SafeVarargs
     public static <T> Iterable<T> sequence(final Iterable<? extends T>... iterables) {
-        return () -> new FlattenIterator<T, Iterable<? extends T>>(ImmutableList.copyOf(iterables)) {
+        return () -> new FlattenIterator<>(ImmutableList.copyOf(iterables)) {
             @Override
             protected Iterator<T> expand(Iterable<? extends T> iterable) {
                 return Iterators.<T>cast(iterable).iterator();
@@ -346,8 +359,9 @@ public class Iterators {
      * Filters another iterator by eliminating duplicates.
      */
     public static <T> Iterator<T> removeDups(Iterator<T> iterator) {
-        return new FilterIterator<T>(iterator) {
+        return new FilterIterator<>(iterator) {
             final Set<T> found = new HashSet<>();
+
             @Override
             protected boolean filter(T t) {
                 return found.add(t);
@@ -374,7 +388,7 @@ public class Iterators {
      * @since 1.485
      */
     public static <T> Iterator<T> limit(final Iterator<? extends T> base, final CountingPredicate<? super T> filter) {
-        return new Iterator<T>() {
+        return new Iterator<>() {
             private T next;
             private boolean end;
             private int index = 0;

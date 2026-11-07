@@ -6,13 +6,14 @@ import hudson.model.Descriptor.FormException;
 import hudson.model.User;
 import hudson.model.UserProperty;
 import hudson.model.UserPropertyDescriptor;
+import hudson.model.userproperty.UserPropertyCategory;
 import hudson.security.SecurityRealm;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import jenkins.model.Jenkins;
@@ -20,7 +21,7 @@ import net.sf.json.JSONObject;
 import org.jenkinsci.Symbol;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
-import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.StaplerRequest2;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -43,7 +44,7 @@ public class LastGrantedAuthoritiesProperty extends UserProperty {
      * Stick to the same object since there's no UI for this.
      */
     @Override
-    public UserProperty reconfigure(StaplerRequest req, JSONObject form) throws FormException {
+    public UserProperty reconfigure(StaplerRequest2 req, JSONObject form) throws FormException {
         req.bindJSON(this, form);
         return this;
     }
@@ -55,7 +56,7 @@ public class LastGrantedAuthoritiesProperty extends UserProperty {
         String[] roles = this.roles;    // capture to a variable for immutability
 
         if (roles == null) {
-            return Collections.singleton(SecurityRealm.AUTHENTICATED_AUTHORITY2);
+            return Set.of(SecurityRealm.AUTHENTICATED_AUTHORITY2);
         }
 
         String authenticatedRole = SecurityRealm.AUTHENTICATED_AUTHORITY2.getAuthority();
@@ -170,6 +171,11 @@ public class LastGrantedAuthoritiesProperty extends UserProperty {
         @Override
         public UserProperty newInstance(User user) {
             return null;
+        }
+
+        @Override
+        public @NonNull UserPropertyCategory getUserPropertyCategory() {
+            return UserPropertyCategory.get(UserPropertyCategory.Invisible.class);
         }
     }
 

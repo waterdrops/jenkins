@@ -34,17 +34,17 @@ import java.io.PipedOutputStream;
 import java.nio.charset.Charset;
 import org.junit.jupiter.api.Test;
 
-public class PlainCLIProtocolTest {
+class PlainCLIProtocolTest {
 
     @Test
-    public void ignoreUnknownOperations() throws Exception {
+    void ignoreUnknownOperations() throws Exception {
         final PipedOutputStream upload = new PipedOutputStream();
         final PipedOutputStream download = new PipedOutputStream();
         class Client extends PlainCLIProtocol.ClientSide {
             int code = -1;
             final ByteArrayOutputStream stdout = new ByteArrayOutputStream();
 
-            Client() throws IOException {
+            Client() {
                 super(new PlainCLIProtocol.FramedOutput(upload));
             }
 
@@ -157,9 +157,9 @@ public class PlainCLIProtocolTest {
         while (server.stdin.size() == 0) {
             Thread.sleep(100);
         }
-        assertEquals("hello", server.stdin.toString(Charset.defaultCharset().name()));
+        assertEquals("hello", server.stdin.toString(Charset.defaultCharset()));
         assertEquals("command", server.arg);
-        assertEquals("goodbye", client.stdout.toString(Charset.defaultCharset().name()));
+        assertEquals("goodbye", client.stdout.toString(Charset.defaultCharset()));
         assertEquals(2, client.code);
     }
 

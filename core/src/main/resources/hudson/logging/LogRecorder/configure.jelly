@@ -26,22 +26,16 @@ THE SOFTWARE.
   Config page
 -->
 <?jelly escape-by-default='true'?>
-<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
-<l:layout permission="${app.ADMINISTER}" title="${%Configure Log Recorder}">
-  <st:include page="sidepanel.jelly" />
-  <l:app-bar title="${%Configure log recorder}">
-    <a class="jenkins-button" tooltip="${%Additional information on log levels}" href="${%url}">
-      <l:icon src="symbol-help-circle" />
-    </a>
-  </l:app-bar>
-  <l:main-panel>
-    <p>
-      ${%Enter the name of the logger you want to enable}.
-    </p>
-    <div class="alert alert-warning">
-      ${%fine_warning}
-    </div>
+<j:jelly xmlns:j="jelly:core" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
+  <l:settings-subpage permission="${app.ADMINISTER}" title="${%Configure log recorder}" includeBreadcrumb="true" header="${null}">
+    <l:app-bar title="${%Configure log recorder}">
+      <t:help href="https://www.jenkins.io/redirect/log-recorders" tooltip="${%Additional information on log levels}" />
+    </l:app-bar>
+
     <f:form method="post" name="config" action="configSubmit">
+      <div class="jenkins-alert jenkins-alert-info jenkins-form-item">
+        ${%fine_warning}
+      </div>
       <j:set var="instance" value="${it}" />
       <f:entry title="${%Name}" help="/help/LogRecorder/name.html">
         <f:textbox field="name"/>
@@ -52,37 +46,22 @@ THE SOFTWARE.
                help="/help/LogRecorder/logger.html">
         <j:set var="instance" value="${null}" />
         <f:repeatable var="instance" items="${it.loggers}" name="loggers">
-          <table width="100%">
-            <tr>
-              <th style="white-space:nowrap;">
-                ${%Logger}
-              </th>
-              <td width="60%">
-                <f:textbox field="name" autoCompleteUrl="autoCompleteLoggerName" />
-              </td>
-              <th style="white-space:nowrap;">
-                ${%Log level}
-              </th>
-              <td>
-                <select name="level">
-                  <j:forEach var="lv" items="${it.LEVELS}">
-                    <f:option value="${lv.name}" selected="${instance.level==lv}">${lv.localizedName}</f:option>
-                  </j:forEach>
-                </select>
-              </td>
-              <td>
-                <f:repeatableDeleteButton/>
-              </td>
-            </tr>
-          </table>
+          <f:entry title="${%Logger}">
+            <f:textbox  field="name" checkUrl="checkName" checkDependsOn="level" autoCompleteUrl="autoCompleteLoggerName" />
+          </f:entry>
+          <f:entry title="${%Log level}">
+            <div class="jenkins-select">
+              <select class="jenkins-select__input" name="level">
+                <j:forEach var="lv" items="${it.LEVELS}">
+                  <f:option value="${lv.name}" selected="${instance.level==lv}">${lv.localizedName}</f:option>
+                </j:forEach>
+              </select>
+            </div>
+          </f:entry>
+          <f:repeatableDeleteButton/>
         </f:repeatable>
       </f:entry>
-
-      <f:block>
-        <f:submit value="${%Save}" />
-      </f:block>
+      <f:saveApplyBar/>
     </f:form>
-    <st:adjunct includes="lib.form.confirm" />
-  </l:main-panel>
-</l:layout>
+  </l:settings-subpage>
 </j:jelly>

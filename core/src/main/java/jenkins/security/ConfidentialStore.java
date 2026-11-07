@@ -1,5 +1,6 @@
 package jenkins.security;
 
+import com.google.common.annotations.VisibleForTesting;
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Extension;
@@ -19,6 +20,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import jenkins.model.Jenkins;
 import org.kohsuke.MetaInfServices;
+import org.kohsuke.accmod.Restricted;
+import org.kohsuke.accmod.restrictions.NoExternalUse;
 
 /**
  * The actual storage for the data held by {@link ConfidentialKey}s, and the holder
@@ -68,8 +71,6 @@ public abstract class ConfidentialStore {
      * Retrieves the currently active singleton instance of {@link ConfidentialStore}.
      */
     public static @NonNull ConfidentialStore get() {
-        if (TEST != null) return TEST.get();
-
         Jenkins j = Jenkins.getInstanceOrNull();
         if (j == null) {
             return Mock.INSTANCE;
@@ -100,15 +101,11 @@ public abstract class ConfidentialStore {
         return cs;
     }
 
-   /**
-     * @deprecated No longer needed.
-     */
-    @Deprecated
-    /*package*/ static ThreadLocal<ConfidentialStore> TEST = null;
+    @Restricted(NoExternalUse.class)
+    @VisibleForTesting
+    public static final class Mock extends ConfidentialStore {
 
-    static final class Mock extends ConfidentialStore {
-
-        static final Mock INSTANCE = new Mock();
+        public static final Mock INSTANCE = new Mock();
 
         private final SecureRandom rand;
 
@@ -124,20 +121,22 @@ public abstract class ConfidentialStore {
             rand.setSeed(new byte[] {1, 2, 3, 4});
         }
 
-        void clear() {
+        public void clear() {
             data.clear();
         }
 
         @Override
         protected void store(ConfidentialKey key, byte[] payload) throws IOException {
-            LOGGER.fine(() -> "storing " + key.getId() + " " + Util.getDigestOf(Util.toHexString(payload)));
+            //called only from tests, get hex string of sha 256 for logging payload
+            LOGGER.fine("storing " + key.getId() + " " + Util.getHexOfSHA256DigestOf(payload));
             data.put(key.getId(), payload);
         }
 
         @Override
         protected byte[] load(ConfidentialKey key) throws IOException {
             byte[] payload = data.get(key.getId());
-            LOGGER.fine(() -> "loading " + key.getId() + " " + (payload != null ? Util.getDigestOf(Util.toHexString(payload)) : "null"));
+            //called only from tests, get hex string of sha 256 for logging payload
+            LOGGER.fine("loading " + key.getId() + " " + (payload != null ? Util.getHexOfSHA256DigestOf(payload) : "null"));
             return payload;
         }
 

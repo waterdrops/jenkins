@@ -26,9 +26,9 @@ package jenkins.util.xstream;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.instanceOf;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.xmlunit.matchers.CompareMatcher.isSimilarTo;
 
 import hudson.util.XStream2;
@@ -36,20 +36,19 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
 import java.io.StringWriter;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.commons.io.IOUtils;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.xmlunit.diff.DefaultNodeMatcher;
 import org.xmlunit.diff.ElementSelectors;
 
 /**
  * @author Kohsuke Kawaguchi
  */
-public class XStreamDOMTest {
+class XStreamDOMTest {
 
     private XStream2 xs;
 
@@ -58,14 +57,14 @@ public class XStreamDOMTest {
         XStreamDOM zot;
     }
 
-    @Before
-    public void setUp() {
+    @BeforeEach
+    void setUp() {
         xs = new XStream2();
         xs.alias("foo", Foo.class);
     }
 
     @Test
-    public void testMarshal() throws IOException {
+    void testMarshal() throws IOException {
         Foo foo = createSomeFoo();
         String xml = xs.toXML(foo);
         System.out.println(xml);
@@ -84,13 +83,13 @@ public class XStreamDOMTest {
 
     private Foo createSomeFoo() {
         Foo foo = new Foo();
-        foo.bar = new XStreamDOM("test1", Collections.singletonMap("key", "value"), "text!");
-        foo.zot = new XStreamDOM("test2", Collections.singletonMap("key", "value"), Collections.singletonList(foo.bar));
+        foo.bar = new XStreamDOM("test1", Map.of("key", "value"), "text!");
+        foo.zot = new XStreamDOM("test2", Map.of("key", "value"), List.of(foo.bar));
         return foo;
     }
 
     @Test
-    public void testUnmarshal() throws Exception {
+    void testUnmarshal() throws Exception {
         Foo foo;
         try (InputStream is = XStreamDOMTest.class.getResourceAsStream("XStreamDOMTest.data1.xml")) {
             foo = (Foo) xs.fromXML(is);
@@ -101,7 +100,7 @@ public class XStreamDOMTest {
     }
 
     @Test
-    public void testWriteToDOM() throws Exception {
+    void testWriteToDOM() throws Exception {
         // roundtrip via DOM
         XStreamDOM dom = XStreamDOM.from(xs, createSomeFoo());
         Foo foo = dom.unmarshal(xs);
@@ -113,7 +112,7 @@ public class XStreamDOMTest {
     }
 
     @Test
-    public void testNoChild() {
+    void testNoChild() {
         String[] in = new String[0];
         XStreamDOM dom = XStreamDOM.from(xs, in);
         System.out.println(xs.toXML(dom));
@@ -122,7 +121,7 @@ public class XStreamDOMTest {
     }
 
     @Test
-    public void testNameEscape() {
+    void testNameEscape() {
         Object o = new Name_That_Gets_Escaped();
         XStreamDOM dom = XStreamDOM.from(xs, o);
         System.out.println(xs.toXML(dom));
@@ -137,7 +136,7 @@ public class XStreamDOMTest {
     }
 
     @Test
-    public void testDomInMap() {
+    void testDomInMap() {
         DomInMap v = new DomInMap();
         v.values.put("foo", createSomeFoo().bar);
         String xml = xs.toXML(v);
@@ -168,7 +167,7 @@ public class XStreamDOMTest {
     }
 
     @Test
-    public void readFromInputStream() throws Exception {
+    void readFromInputStream() throws Exception {
         for (String name : new String[]{"XStreamDOMTest.data1.xml", "XStreamDOMTest.data2.xml"}) {
             String input = getTestData(name);
             XStreamDOM dom = XStreamDOM.from(new StringReader(input));
@@ -183,11 +182,11 @@ public class XStreamDOMTest {
      * which means escaped names.
      */
     @Test
-    public void escapeHandling() throws Exception {
+    void escapeHandling() throws Exception {
         String input = getTestData("XStreamDOMTest.data3.xml");
 
         XStreamDOM dom = XStreamDOM.from(new StringReader(input));
-        List<XStreamDOM> children = dom.getChildren().get(0).getChildren().get(0).getChildren();
+        List<XStreamDOM> children = dom.getChildren().getFirst().getChildren().getFirst().getChildren();
         assertNamesAreEscaped(children);
 
         Foo foo = (Foo) xs.fromXML(new StringReader(input));

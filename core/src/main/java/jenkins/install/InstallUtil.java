@@ -27,19 +27,22 @@ package jenkins.install;
 import static java.util.logging.Level.SEVERE;
 import static java.util.logging.Level.WARNING;
 
-import com.thoughtworks.xstream.XStream;
 import edu.umd.cs.findbugs.annotations.CheckForNull;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Functions;
+import hudson.Util;
 import hudson.model.UpdateCenter.DownloadJob.InstallationStatus;
 import hudson.model.UpdateCenter.DownloadJob.Installing;
 import hudson.model.UpdateCenter.InstallationJob;
 import hudson.model.UpdateCenter.UpdateCenterJob;
 import hudson.util.VersionNumber;
+import hudson.util.XStream2;
+import jakarta.inject.Provider;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -49,12 +52,9 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.inject.Provider;
 import jenkins.model.Jenkins;
 import jenkins.util.SystemProperties;
 import jenkins.util.xml.XMLUtils;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang.StringUtils;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 
@@ -210,10 +210,10 @@ public class InstallUtil {
         File lastExecVersionFile = getLastExecVersionFile();
         if (lastExecVersionFile.exists()) {
             try {
-                String version = FileUtils.readFileToString(lastExecVersionFile, Charset.defaultCharset());
+                String version = Files.readString(Util.fileToPath(lastExecVersionFile), Charset.defaultCharset());
                 // JENKINS-37438 blank will force the setup
                 // wizard regardless of current state of the system
-                if (StringUtils.isBlank(version)) {
+                if (version == null || version.isBlank()) {
                     return FORCE_NEW_INSTALL_VERSION.toString();
                 }
                 return version;
@@ -234,7 +234,7 @@ public class InstallUtil {
             if (configFile.exists()) {
                 try {
                     String lastVersion = XMLUtils.getValue("/hudson/version", configFile);
-                    if (lastVersion.length() > 0) {
+                    if (!lastVersion.isEmpty()) {
                         LOGGER.log(Level.FINE, "discovered serialized lastVersion {0}", lastVersion);
                         return lastVersion;
                     }
@@ -253,7 +253,7 @@ public class InstallUtil {
     static void saveLastExecVersion(@NonNull String version) {
         File lastExecVersionFile = getLastExecVersionFile();
         try {
-            FileUtils.write(lastExecVersionFile, version, Charset.defaultCharset());
+            Files.writeString(Util.fileToPath(lastExecVersionFile), version, Charset.defaultCharset());
         } catch (IOException e) {
             LOGGER.log(SEVERE, "Failed to save " + lastExecVersionFile.getAbsolutePath(), e);
         }
@@ -288,7 +288,7 @@ public class InstallUtil {
         if (installingPluginsFile == null || !installingPluginsFile.exists()) {
             return null;
         }
-        return (Map<String, String>) new XStream().fromXML(installingPluginsFile);
+        return (Map<String, String>) new XStream2().fromXML(installingPluginsFile);
     }
 
     /**
@@ -307,8 +307,7 @@ public class InstallUtil {
         LOGGER.fine("Writing install state to: " + installingPluginsFile.getAbsolutePath());
         Map<String, String> statuses = new HashMap<>();
         for (UpdateCenterJob j : installingPlugins) {
-            if (j instanceof InstallationJob && j.getCorrelationId() != null) { // only include install jobs with a correlation id (directly selected)
-                InstallationJob ij = (InstallationJob) j;
+            if (j instanceof InstallationJob ij && j.getCorrelationId() != null) { // only include install jobs with a correlation id (directly selected)
                 InstallationStatus status = ij.status;
                 String statusText = status.getType();
                 if (status instanceof Installing) { // flag currently installing plugins as pending
@@ -318,8 +317,8 @@ public class InstallUtil {
             }
         }
         try {
-            String installingPluginXml = new XStream().toXML(statuses);
-            FileUtils.write(installingPluginsFile, installingPluginXml);
+            String installingPluginXml = new XStream2().toXML(statuses);
+            Files.writeString(Util.fileToPath(installingPluginsFile), installingPluginXml, StandardCharsets.UTF_8);
         } catch (IOException e) {
             LOGGER.log(SEVERE, "Failed to save " + installingPluginsFile.getAbsolutePath(), e);
         }

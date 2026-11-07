@@ -1,25 +1,24 @@
 package hudson.util;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang.StringUtils;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
-public class TextFileTest {
+class TextFileTest {
 
-    @Rule
-    public TemporaryFolder tmp = new TemporaryFolder();
+    @TempDir
+    private File tmp;
 
     @Test
-    public void head() throws Exception {
-        File f = tmp.newFile();
+    void head() throws Exception {
+        File f = File.createTempFile("junit", null, tmp);
         FileUtils.copyURLToFile(getClass().getResource("ascii.txt"), f);
 
         TextFile t = new TextFile(f);
@@ -29,28 +28,28 @@ public class TextFileTest {
     }
 
     @Test
-    public void shortHead() throws Exception {
-        File f = tmp.newFile();
-        FileUtils.write(f, "hello", Charset.defaultCharset());
+    void shortHead() throws Exception {
+        File f = File.createTempFile("junit", null, tmp);
+        Files.writeString(f.toPath(), "hello", Charset.defaultCharset());
 
         TextFile t = new TextFile(f);
         assertEquals("hello", t.head(35));
     }
 
     @Test
-    public void tail() throws Exception {
-        File f = tmp.newFile();
+    void tail() throws Exception {
+        File f = File.createTempFile("junit", null, tmp);
         FileUtils.copyURLToFile(getClass().getResource("ascii.txt"), f);
-        String whole = FileUtils.readFileToString(f, Charset.defaultCharset());
+        String whole = Files.readString(f.toPath(), Charset.defaultCharset());
         TextFile t = new TextFile(f);
         String tailStr = whole.substring(whole.length() - 34);
         assertEquals(tailStr, t.fastTail(tailStr.length()));
     }
 
     @Test
-    public void shortTail() throws Exception {
-        File f = tmp.newFile();
-        FileUtils.write(f, "hello", Charset.defaultCharset());
+    void shortTail() throws Exception {
+        File f = File.createTempFile("junit", null, tmp);
+        Files.writeString(f.toPath(), "hello", Charset.defaultCharset());
 
         TextFile t = new TextFile(f);
         assertEquals("hello", t.fastTail(35));
@@ -63,8 +62,8 @@ public class TextFileTest {
      * careful, we'll parse the text incorrectly.
      */
     @Test
-    public void tailShiftJIS() throws Exception {
-        File f = tmp.newFile();
+    void tailShiftJIS() throws Exception {
+        File f = File.createTempFile("junit", null, tmp);
 
         TextFile t = new TextFile(f);
 
@@ -79,7 +78,7 @@ public class TextFileTest {
         }
 
         String tail = t.fastTail(35, Charset.forName("Shift_JIS"));
-        assertEquals(StringUtils.repeat("\u30e2", 34) + "\n", tail);
+        assertEquals("\u30e2".repeat(34) + "\n", tail);
         assertEquals(35, tail.length());
 
         // add one more byte to force fastTail to read from one byte ahead
@@ -90,7 +89,7 @@ public class TextFileTest {
         }
 
         tail = t.fastTail(35, Charset.forName("Shift_JIS"));
-        assertEquals(StringUtils.repeat("\u30e2", 33) + "\n\n", tail);
+        assertEquals("\u30e2".repeat(33) + "\n\n", tail);
         assertEquals(35, tail.length());
     }
 

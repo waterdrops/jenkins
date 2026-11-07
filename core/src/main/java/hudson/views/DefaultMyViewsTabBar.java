@@ -24,6 +24,7 @@
 
 package hudson.views;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Extension;
 import org.jenkinsci.Symbol;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -34,7 +35,9 @@ import org.kohsuke.stapler.DataBoundConstructor;
  * @author Winston Prakash
  * @since 1.378
  * @see MyViewsTabBar
+ * @deprecated No longer used
  */
+@Deprecated
 public class DefaultMyViewsTabBar extends MyViewsTabBar {
     @DataBoundConstructor
     public DefaultMyViewsTabBar() {
@@ -42,6 +45,7 @@ public class DefaultMyViewsTabBar extends MyViewsTabBar {
 
     @Extension @Symbol("standard")
     public static class DescriptorImpl extends MyViewsTabBarDescriptor {
+        @NonNull
         @Override
         public String getDisplayName() {
             return Messages.DefaultMyViewsTabsBar_DisplayName();

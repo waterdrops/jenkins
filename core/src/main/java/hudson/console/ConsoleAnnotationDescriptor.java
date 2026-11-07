@@ -24,16 +24,17 @@
 
 package hudson.console;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.DescriptorExtensionList;
 import hudson.ExtensionPoint;
 import hudson.model.Descriptor;
+import jakarta.servlet.ServletException;
 import java.io.IOException;
 import java.net.URL;
 import java.util.concurrent.TimeUnit;
-import javax.servlet.ServletException;
 import jenkins.model.Jenkins;
-import org.kohsuke.stapler.StaplerRequest;
-import org.kohsuke.stapler.StaplerResponse;
+import org.kohsuke.stapler.StaplerRequest2;
+import org.kohsuke.stapler.StaplerResponse2;
 import org.kohsuke.stapler.WebMethod;
 
 /**
@@ -55,6 +56,7 @@ public abstract class ConsoleAnnotationDescriptor extends Descriptor<ConsoleNote
      *
      * Users use this name to enable/disable annotations.
      */
+    @NonNull
     @Override
     public String getDisplayName() {
         return super.getDisplayName();
@@ -79,12 +81,12 @@ public abstract class ConsoleAnnotationDescriptor extends Descriptor<ConsoleNote
     }
 
     @WebMethod(name = "script.js")
-    public void doScriptJs(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+    public void doScriptJs(StaplerRequest2 req, StaplerResponse2 rsp) throws IOException, ServletException {
         rsp.serveFile(req, hasResource("/script.js"), TimeUnit.DAYS.toMillis(1));
     }
 
     @WebMethod(name = "style.css")
-    public void doStyleCss(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+    public void doStyleCss(StaplerRequest2 req, StaplerResponse2 rsp) throws IOException, ServletException {
         rsp.serveFile(req, hasResource("/style.css"), TimeUnit.DAYS.toMillis(1));
     }
 

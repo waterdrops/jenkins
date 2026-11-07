@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -45,7 +46,7 @@ public abstract class AsyncPeriodicWork extends PeriodicWork {
      *
      * @since 1.651
      */
-    private static final long LOG_ROTATE_SIZE = SystemProperties.getLong(AsyncPeriodicWork.class.getName() + ".logRotateSize", -1L);
+    private static final long LOG_ROTATE_SIZE = SystemProperties.getLong(AsyncPeriodicWork.class.getName() + ".logRotateSize", 10485760L);
     /**
      * The number of milliseconds (since startup or previous rotation) after which to try and rotate the log file.
      *
@@ -73,6 +74,8 @@ public abstract class AsyncPeriodicWork extends PeriodicWork {
 
     private Thread thread;
 
+    private final AtomicBoolean pending = new AtomicBoolean(false);
+
     protected AsyncPeriodicWork(String name) {
         this.name = name;
         this.logRotateMillis = TimeUnit.MINUTES.toMillis(
@@ -88,15 +91,20 @@ public abstract class AsyncPeriodicWork extends PeriodicWork {
     public final void doRun() {
         try {
             if (thread != null && thread.isAlive()) {
-                logger.log(this.getSlowLoggingLevel(), "{0} thread is still running. Execution aborted.", name);
+                if (queueIfAlreadyRunning()) {
+                    logger.log(this.getSlowLoggingLevel(), "Scheduling another run of {0} since it is already running", name);
+                    pending.set(true);
+                } else {
+                    logger.log(this.getSlowLoggingLevel(), "{0} thread is still running. Execution aborted.", name);
+                }
                 return;
             }
             thread = new Thread(() -> {
-                logger.log(getNormalLoggingLevel(), "Started {0}", name);
+                logger.log(Level.FINE, "Started {0}", name);
                 long startTime = System.currentTimeMillis();
                 long stopTime;
 
-                LazyTaskListener l = new LazyTaskListener(() -> createListener(), String.format("Started at %tc", new Date(startTime)));
+                LazyTaskListener l = new LazyTaskListener(this::createListener, String.format("Started at %tc", new Date(startTime)));
                 try {
                     try (ACLContext ctx = ACL.as2(ACL.SYSTEM2)) {
                         execute(l);
@@ -110,8 +118,13 @@ public abstract class AsyncPeriodicWork extends PeriodicWork {
                     l.close(String.format("Finished at %tc. %dms", new Date(stopTime), stopTime - startTime));
                 }
 
-                logger.log(getNormalLoggingLevel(), "Finished {0}. {1,number} ms",
+                logger.log(Level.FINE, "Finished {0}. {1,number} ms",
                         new Object[]{name, stopTime - startTime});
+                thread = null;
+                if (pending.getAndSet(false)) {
+                    logger.log(this.getSlowLoggingLevel(), "An execution of {0} was requested while it was running, scheduling another run now", name);
+                    doRun();
+                }
             }, name + " thread");
             thread.start();
         } catch (Throwable t) {
@@ -262,4 +275,12 @@ public abstract class AsyncPeriodicWork extends PeriodicWork {
      *      The caller will record the exception and moves on.
      */
     protected abstract void execute(TaskListener listener) throws IOException, InterruptedException;
+
+    /**
+     * @return true if a new run should be queued if it is already running while called.
+     * @since 2.517
+     */
+    protected boolean queueIfAlreadyRunning() {
+        return false;
+    }
 }

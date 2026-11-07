@@ -25,7 +25,6 @@
 package jenkins.util.io;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Functions;
 import hudson.Util;
 import java.io.IOException;
@@ -72,7 +71,7 @@ public class PathRemover {
     public void forceRemoveFile(@NonNull Path path) throws IOException {
         for (int retryAttempts = 0; ; retryAttempts++) {
             Optional<IOException> maybeError = tryRemoveFile(path);
-            if (!maybeError.isPresent()) return;
+            if (maybeError.isEmpty()) return;
             if (retryStrategy.shouldRetry(retryAttempts)) continue;
             IOException error = maybeError.get();
             throw new IOException(retryStrategy.failureMessage(path, retryAttempts), error);
@@ -135,8 +134,6 @@ public class PathRemover {
             this.waitBetweenRetries = waitBetweenRetries;
         }
 
-        @SuppressFBWarnings(value = "DM_GC", justification = "Garbage collection happens only when "
-                + "GC_AFTER_FAILED_DELETE is true. It's an experimental feature in Jenkins.")
         private void gcIfEnabled() {
             /* If the Jenkins process had the file open earlier, and it has not
              * closed it then Windows won't let us delete it until the Java object
@@ -169,7 +166,7 @@ public class PathRemover {
             sb.append("'. Tried ");
             sb.append(retryCount + 1);
             sb.append(" time");
-            if (retryCount != 1) sb.append('s');
+            if (retryCount + 1 != 1) sb.append('s');
             if (maxRetries > 0) {
                 sb.append(" (of a maximum of ");
                 sb.append(maxRetries + 1);
@@ -214,7 +211,6 @@ public class PathRemover {
         return accumulatedErrors;
     }
 
-    @SuppressFBWarnings(value = "RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE", justification = "https://github.com/spotbugs/spotbugs/issues/756")
     private List<IOException> tryRemoveDirectoryContents(@NonNull Path path) {
         Path normalized = path.normalize();
         List<IOException> accumulatedErrors = new ArrayList<>();
@@ -229,7 +225,6 @@ public class PathRemover {
         return accumulatedErrors;
     }
 
-    @SuppressFBWarnings(value = "RCN_REDUNDANT_NULLCHECK_WOULD_HAVE_BEEN_A_NPE", justification = "https://github.com/spotbugs/spotbugs/issues/756")
     private void removeOrMakeRemovableThenRemove(@NonNull Path path) throws IOException {
         pathChecker.check(path);
         try {

@@ -24,40 +24,39 @@
 
 package jenkins.model;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import hudson.model.Failure;
 import hudson.model.Messages;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.Issue;
 
-public class Security2424Test {
+class Security2424Test {
+
     @Test
     @Issue("SECURITY-2424")
-    public void doesNotAcceptNameWithTrailingDot_regular() {
-        try {
-            Jenkins.checkGoodName("job.");
-            fail("Names with dot should not be accepted");
-        } catch (Failure e) {
-            assertEquals(Messages.Hudson_TrailingDot(), e.getMessage());
-        }
+    void doesNotAcceptNameWithTrailingDot_regular() {
+        Failure e = assertThrows(
+                Failure.class,
+                () -> Jenkins.checkGoodName("job."),
+                "Names with dot should not be accepted");
+        assertEquals(Messages.Hudson_TrailingDot(), e.getMessage());
     }
 
     @Test
     @Issue("SECURITY-2424")
-    public void doesNotAcceptNameWithTrailingDot_withSpaces() {
-        try {
-            Jenkins.checkGoodName("job.   ");
-            fail("Names with dot should not be accepted");
-        } catch (Failure e) {
-            assertEquals(Messages.Hudson_TrailingDot(), e.getMessage());
-        }
+    void doesNotAcceptNameWithTrailingDot_withSpaces() {
+        Failure e = assertThrows(
+                Failure.class,
+                () -> Jenkins.checkGoodName("job.   "),
+                "Names with dot should not be accepted");
+        assertEquals(Messages.Hudson_TrailingDot(), e.getMessage());
     }
 
     @Test
     @Issue("SECURITY-2424")
-    public void doesNotAcceptNameWithTrailingDot_exceptIfEscapeHatchIsSet() {
+    void doesNotAcceptNameWithTrailingDot_exceptIfEscapeHatchIsSet() {
         String propName = Jenkins.NAME_VALIDATION_REJECTS_TRAILING_DOT_PROP;
         String initialValue = System.getProperty(propName);
         System.setProperty(propName, "false");

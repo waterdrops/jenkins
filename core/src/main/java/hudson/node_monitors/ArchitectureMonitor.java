@@ -24,14 +24,14 @@
 
 package hudson.node_monitors;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Extension;
 import hudson.model.Computer;
 import hudson.remoting.Callable;
 import java.io.IOException;
 import jenkins.security.MasterToSlaveCallable;
-import net.sf.json.JSONObject;
 import org.jenkinsci.Symbol;
-import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.DataBoundConstructor;
 
 /**
  * Discovers the architecture of the system to display in the agent list page.
@@ -39,6 +39,11 @@ import org.kohsuke.stapler.StaplerRequest;
  * @author Kohsuke Kawaguchi
  */
 public class ArchitectureMonitor extends NodeMonitor {
+
+    @DataBoundConstructor
+    public ArchitectureMonitor() {
+    }
+
     @Extension @Symbol("architecture")
     public static final class DescriptorImpl extends AbstractAsyncNodeMonitorDescriptor<String> {
         @Override
@@ -46,14 +51,15 @@ public class ArchitectureMonitor extends NodeMonitor {
             return new GetArchTask();
         }
 
+        @NonNull
         @Override
         public String getDisplayName() {
             return Messages.ArchitectureMonitor_DisplayName();
         }
 
         @Override
-        public NodeMonitor newInstance(StaplerRequest req, JSONObject formData) throws FormException {
-            return new ArchitectureMonitor();
+        public boolean canTakeOffline() {
+            return false;
         }
     }
 

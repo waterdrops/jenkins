@@ -24,6 +24,7 @@
 
 package hudson.node_monitors;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Extension;
 import hudson.model.Computer;
@@ -31,11 +32,10 @@ import hudson.model.Node;
 import hudson.remoting.Callable;
 import hudson.util.ClockDifference;
 import java.io.IOException;
-import net.sf.json.JSONObject;
 import org.jenkinsci.Symbol;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
-import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.DataBoundConstructor;
 
 /**
  * {@link NodeMonitor} that checks clock of {@link Node} to
@@ -45,6 +45,11 @@ import org.kohsuke.stapler.StaplerRequest;
  * @since 1.123
  */
 public class ClockMonitor extends NodeMonitor {
+
+    @DataBoundConstructor
+    public ClockMonitor() {
+    }
+
     public ClockDifference getDifferenceFor(Computer c) {
         return DESCRIPTOR.get(c);
     }
@@ -66,20 +71,21 @@ public class ClockMonitor extends NodeMonitor {
         }
 
         @Override
+        public boolean canTakeOffline() {
+            return false;
+        }
+
+        @Override
         protected Callable<ClockDifference, IOException> createCallable(Computer c) {
             Node n = c.getNode();
             if (n == null) return null;
             return n.getClockDifferenceCallable();
         }
 
+        @NonNull
         @Override
         public String getDisplayName() {
             return Messages.ClockMonitor_DisplayName();
-        }
-
-        @Override
-        public NodeMonitor newInstance(StaplerRequest req, JSONObject formData) throws FormException {
-            return new ClockMonitor();
         }
     }
 }

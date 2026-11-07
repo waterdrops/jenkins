@@ -77,7 +77,7 @@ public interface GNUCLibrary extends Library {
 
     int fcntl(int fd, int command);
 
-    int fcntl(int fd, int command, int flags);
+    int fcntl(int fd, int command, Object... flags);
 
     // obtained from Linux. Needs to be checked if these values are portable.
     int F_GETFD = 1;
@@ -128,7 +128,7 @@ public interface GNUCLibrary extends Library {
     /**
      * Creates a symlink.
      *
-     * See http://linux.die.net/man/3/symlink
+     * See <a href="https://linux.die.net/man/3/symlink">symlink(3)</a>
      */
     int symlink(String oldname, String newname);
 

@@ -1,30 +1,40 @@
-Behaviour.specify("span.copy-button", 'copyButton', 0, function(e) {
-    var btn = e.firstChild;
-    var id = "copy-button"+(iota++);
-    btn.id = id;
+Behaviour.specify(
+  ".jenkins-copy-button",
+  "copyButton",
+  0,
+  function (copyButton) {
+    if (isSecureContext) {
+      copyButton.addEventListener("click", () => {
+        var text = copyButton.getAttribute("text");
+        if (copyButton.hasAttribute("ref")) {
+          var ref = copyButton.getAttribute("ref");
+          var target = document.getElementById(ref);
+          if (target) {
+            text = target.innerText;
+          }
+        }
 
-    makeButton(btn, function() {
-        //make an invisible textarea element containing the text
-        var el = document.createElement('textarea');
-        el.value = e.getAttribute("text");
-        el.style.width = "1px";
-        el.style.height = "1px";
-        el.style.border = "none";
-        el.style.padding = "0px";
-        el.style.position = "absolute";
-        el.style.top = "-99999px";
-        el.style.left = "-99999px";
-        el.setAttribute("tabindex", "-1");
-        document.body.appendChild(el);
-
-        //select the text and copy it to the clipboard
-        el.select();
-        document.execCommand('copy');
-
-        //remove the textarea element
-        document.body.removeChild(el);
-
-        //show the notification
-        notificationBar.show(e.getAttribute("message"));
-    });
-});
+        // Copy the text to the clipboard
+        navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            copyButton.classList.add("jenkins-copy-button--copied");
+            setTimeout(() => {
+              copyButton.classList.remove("jenkins-copy-button--copied");
+            }, 2000);
+          })
+          .catch(() => {
+            hoverNotification(
+              "Could not get permission to write to clipboard",
+              copyButton,
+            );
+          });
+      });
+    } else {
+      copyButton.disabled = true;
+      copyButton.removeAttribute("tooltip");
+      const parent = copyButton.parentElement;
+      parent.setAttribute("tooltip", parent.dataset.messageInsecure);
+    }
+  },
+);

@@ -24,6 +24,7 @@
 
 package hudson.model;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.EnvVars;
 import hudson.Extension;
 import hudson.Launcher;
@@ -33,11 +34,11 @@ import hudson.tools.ToolInstallation;
 import hudson.tools.ToolInstaller;
 import hudson.tools.ToolProperty;
 import hudson.util.FormValidation;
-import hudson.util.NullStream;
 import hudson.util.StreamTaskListener;
 import hudson.util.XStream2;
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.lang.reflect.Constructor;
 import java.util.Arrays;
 import java.util.Collections;
@@ -46,6 +47,7 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import jenkins.model.Jenkins;
+import jenkins.security.XStreamDeserializable;
 import org.jenkinsci.Symbol;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
@@ -78,6 +80,7 @@ public final class JDK extends ToolInstallation implements NodeSpecific<JDK>, En
      * @deprecated since 2009-02-25
      */
     @Deprecated // kept for backward compatibility - use getHome() instead
+    @XStreamDeserializable
     private transient String javaHome;
 
     public JDK(String name, String javaHome) {
@@ -163,7 +166,7 @@ public final class JDK extends ToolInstallation implements NodeSpecific<JDK>, En
      */
     public static boolean isDefaultJDKValid(Node n) {
         try {
-            TaskListener listener = new StreamTaskListener(new NullStream());
+            TaskListener listener = new StreamTaskListener(OutputStream.nullOutputStream());
             Launcher launcher = n.createLauncher(listener);
             return launcher.launch().cmds("java", "-fullversion").stdout(listener).join() == 0;
         } catch (IOException | InterruptedException e) {
@@ -174,6 +177,7 @@ public final class JDK extends ToolInstallation implements NodeSpecific<JDK>, En
     @Extension @Symbol("jdk")
     public static class DescriptorImpl extends ToolDescriptor<JDK> {
 
+        @NonNull
         @Override
         public String getDisplayName() {
             return Messages.JDK_DisplayName();
@@ -195,7 +199,7 @@ public final class JDK extends ToolInstallation implements NodeSpecific<JDK>, En
                 Class<? extends ToolInstaller> jdkInstallerClass = Jenkins.get().getPluginManager()
                         .uberClassLoader.loadClass("hudson.tools.JDKInstaller").asSubclass(ToolInstaller.class);
                 Constructor<? extends ToolInstaller> constructor = jdkInstallerClass.getConstructor(String.class, boolean.class);
-                return Collections.singletonList(constructor.newInstance(null, false));
+                return List.of(constructor.newInstance(null, false));
             } catch (ClassNotFoundException e) {
                 return Collections.emptyList();
             } catch (Exception e) {

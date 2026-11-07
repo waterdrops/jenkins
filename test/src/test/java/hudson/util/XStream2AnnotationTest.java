@@ -31,20 +31,20 @@ import com.thoughtworks.xstream.annotations.XStreamAlias;
 import hudson.ExtensionList;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import jenkins.model.GlobalConfiguration;
-import org.apache.commons.io.FileUtils;
-import org.junit.Rule;
-import org.junit.Test;
-import org.jvnet.hudson.test.JenkinsSessionRule;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.jvnet.hudson.test.TestExtension;
+import org.jvnet.hudson.test.junit.jupiter.JenkinsSessionExtension;
 
-public class XStream2AnnotationTest {
+class XStream2AnnotationTest {
 
-    @Rule
-    public JenkinsSessionRule rr = new JenkinsSessionRule();
+    @RegisterExtension
+    public JenkinsSessionExtension rr = new JenkinsSessionExtension();
 
     @Test
-    public void xStreamAlias() throws Throwable {
+    void xStreamAlias() throws Throwable {
         rr.then(r -> {
             AnnotatedProcessed annotatedProcessed = AnnotatedProcessed.get();
             annotatedProcessed.x = 1;
@@ -66,9 +66,7 @@ public class XStream2AnnotationTest {
             // Typical content saved by Jenkins session when annotation autodetection was still enabled:
             AnnotatedUnprocessed.get().writeXml("<myconf-annotated-unprocessed><x>4</x></myconf-annotated-unprocessed>");
         });
-        rr.then(r -> {
-            assertThat("CannotResolveClassException/IOException caught in Descriptor.load", AnnotatedUnprocessed.get().x, is(0));
-        });
+        rr.then(r -> assertThat("CannotResolveClassException/IOException caught in Descriptor.load", AnnotatedUnprocessed.get().x, is(0)));
     }
 
     @XStreamAlias("myconf-annotated-processed")
@@ -80,6 +78,7 @@ public class XStream2AnnotationTest {
 
         int x;
 
+        @SuppressWarnings(value = "checkstyle:redundantmodifier")
         public AnnotatedProcessed() {
             getConfigFile().getXStream().processAnnotations(AnnotatedProcessed.class);
             load();
@@ -99,6 +98,7 @@ public class XStream2AnnotationTest {
 
         int x;
 
+        @SuppressWarnings(value = "checkstyle:redundantmodifier")
         public AnnotatedUnprocessed() {
             load();
         }
@@ -108,7 +108,7 @@ public class XStream2AnnotationTest {
         }
 
         void writeXml(String xml) throws IOException {
-            FileUtils.write(getConfigFile().getFile(), xml, StandardCharsets.UTF_8);
+            Files.writeString(getConfigFile().getFile().toPath(), xml, StandardCharsets.UTF_8);
         }
     }
 
@@ -120,6 +120,7 @@ public class XStream2AnnotationTest {
 
         int x;
 
+        @SuppressWarnings(value = "checkstyle:redundantmodifier")
         public Programmatic() {
             getConfigFile().getXStream().alias("myconf-programmatic", Programmatic.class);
             load();

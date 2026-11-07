@@ -25,18 +25,21 @@
 package hudson.util.io;
 
 import hudson.Functions;
+import hudson.Util;
 import hudson.util.FileVisitor;
 import hudson.util.IOUtils;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
-import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
-import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
-import org.apache.commons.compress.archivers.tar.TarConstants;
-import org.apache.commons.compress.utils.BoundedInputStream;
+import java.nio.file.attribute.BasicFileAttributes;
+import org.apache.commons.io.input.BoundedInputStream;
+import org.apache.tools.tar.TarConstants;
+import org.apache.tools.tar.TarEntry;
+import org.apache.tools.tar.TarOutputStream;
 
 /**
  * {@link FileVisitor} that creates a tar archive.
@@ -45,17 +48,17 @@ import org.apache.commons.compress.utils.BoundedInputStream;
  */
 final class TarArchiver extends Archiver {
     private final byte[] buf = new byte[8192];
-    private final TarArchiveOutputStream tar;
+    private final TarOutputStream tar;
 
-    TarArchiver(OutputStream out) {
-        tar = new TarArchiveOutputStream(out);
-        tar.setBigNumberMode(TarArchiveOutputStream.BIGNUMBER_STAR);
-        tar.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU);
+    TarArchiver(OutputStream out, Charset filenamesEncoding) {
+        tar = new TarOutputStream(out, filenamesEncoding.name());
+        tar.setBigNumberMode(TarOutputStream.BIGNUMBER_STAR);
+        tar.setLongFileMode(TarOutputStream.LONGFILE_GNU);
     }
 
     @Override
     public void visitSymlink(File link, String target, String relativePath) throws IOException {
-        TarArchiveEntry e = new TarArchiveEntry(relativePath, TarConstants.LF_SYMLINK);
+        TarEntry e = new TarEntry(relativePath, TarConstants.LF_SYMLINK);
         try {
             int mode = IOUtils.mode(link);
             if (mode != -1) {
@@ -67,8 +70,8 @@ final class TarArchiver extends Archiver {
 
         e.setLinkName(target);
 
-        tar.putArchiveEntry(e);
-        tar.closeArchiveEntry();
+        tar.putNextEntry(e);
+        tar.closeEntry();
         entriesWritten++;
     }
 
@@ -82,27 +85,29 @@ final class TarArchiver extends Archiver {
         if (Functions.isWindows())
             relativePath = relativePath.replace('\\', '/');
 
-        if (file.isDirectory())
+        BasicFileAttributes basicFileAttributes = Files.readAttributes(Util.fileToPath(file), BasicFileAttributes.class);
+        if (basicFileAttributes.isDirectory())
             relativePath += '/';
-        TarArchiveEntry te = new TarArchiveEntry(relativePath);
+        TarEntry te = new TarEntry(relativePath);
         int mode = IOUtils.mode(file);
         if (mode != -1)   te.setMode(mode);
-        te.setModTime(file.lastModified());
+        te.setModTime(basicFileAttributes.lastModifiedTime().toMillis());
         long size = 0;
 
-        if (!file.isDirectory()) {
-            size = file.length();
+        if (!basicFileAttributes.isDirectory()) {
+            size = basicFileAttributes.size();
             te.setSize(size);
         }
-        tar.putArchiveEntry(te);
-        try {
-            if (!file.isDirectory()) {
-                // ensure we don't write more bytes than the declared when we created the entry
-
-                try (InputStream fin = Files.newInputStream(file.toPath());
-                     BoundedInputStream in = new BoundedInputStream(fin, size)) {
-                    // Separate try block not to wrap exception thrown while opening the input stream into an exception
-                    // indicating a problem while writing
+        if (basicFileAttributes.isDirectory()) {
+            tar.putNextEntry(te);
+            tar.closeEntry();
+        } else {
+            // Open the file before writing its tar header so an unreadable file does not leave an incomplete entry.
+            try (InputStream fin = Files.newInputStream(file.toPath());
+                 BoundedInputStream in = new BoundedInputStream(fin, size)) {
+                tar.putNextEntry(te);
+                try {
+                    // ensure we don't write more bytes than the declared when we created the entry
                     try {
                         int len;
                         while ((len = in.read(buf)) >= 0) {
@@ -111,10 +116,10 @@ final class TarArchiver extends Archiver {
                     } catch (IOException | InvalidPathException e) { // log the exception in any case
                         throw new IOException("Error writing to tar file from: " + file, e);
                     }
+                } finally { // always close the entry
+                    tar.closeEntry();
                 }
             }
-        } finally { // always close the entry
-            tar.closeArchiveEntry();
         }
         entriesWritten++;
     }

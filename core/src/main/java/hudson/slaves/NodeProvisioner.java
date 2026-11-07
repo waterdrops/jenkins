@@ -39,13 +39,13 @@ import hudson.model.MultiStageTimeSeries;
 import hudson.model.MultiStageTimeSeries.TimeScale;
 import hudson.model.Node;
 import hudson.model.PeriodicWork;
-import hudson.model.Queue;
 import java.awt.Color;
 import java.io.IOException;
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
@@ -207,8 +207,8 @@ public class NodeProvisioner {
      * Periodically invoked to keep track of the load.
      * Launches additional nodes if necessary.
      *
-     * Note: This method will obtain a lock on {@link #provisioningLock} first (to ensure that one and only one
-     * instance of this provisioner is running at a time) and then a lock on {@link Queue#lock}
+     * Note: This method will obtain a lock on {@link #provisioningLock} to ensure that one and only one
+     * instance of this provisioner is running at a time.
      */
     private void update() {
         long start = LOGGER.isLoggable(Level.FINER) ? System.nanoTime() : 0;
@@ -250,7 +250,7 @@ public class NodeProvisioner {
                                 LOGGER.log(Level.INFO,
                                         "{0} provisioning successfully completed. "
                                                 + "We have now {1,number,integer} computer(s)",
-                                        new Object[]{f.displayName, jenkins.getComputers().length});
+                                        new Object[]{f.displayName, jenkins.getComputersCollection().size()});
                                 fireOnCommit(f, node);
                             } catch (IOException e) {
                                 LOGGER.log(Level.WARNING,
@@ -319,7 +319,7 @@ public class NodeProvisioner {
             if (provisioningState != null) {
                 List<Strategy> strategies = Jenkins.get().getExtensionList(Strategy.class);
                 for (Strategy strategy : strategies.isEmpty()
-                        ? Collections.<Strategy>singletonList(new StandardStrategyImpl())
+                        ? List.of(new StandardStrategyImpl())
                         : strategies) {
                     LOGGER.log(Level.FINER, "Consulting {0} provisioning strategy with state {1}",
                             new Object[]{strategy, provisioningState});
@@ -802,9 +802,9 @@ public class NodeProvisioner {
          * can be brought online before we start allocating more.
          */
         @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "for script console")
-        public static int INITIALDELAY = SystemProperties.getInteger(NodeProvisioner.class.getName() + ".initialDelay", LoadStatistics.CLOCK * 10);
+        public static int INITIALDELAY = (int) SystemProperties.getDuration(NodeProvisioner.class.getName() + ".initialDelay", ChronoUnit.MILLIS, Duration.ofMillis((long) LoadStatistics.CLOCK * 10)).toMillis();
         @SuppressFBWarnings(value = "MS_SHOULD_BE_FINAL", justification = "for script console")
-        public static int RECURRENCEPERIOD = SystemProperties.getInteger(NodeProvisioner.class.getName() + ".recurrencePeriod", LoadStatistics.CLOCK);
+        public static int RECURRENCEPERIOD = (int) SystemProperties.getDuration(NodeProvisioner.class.getName() + ".recurrencePeriod", ChronoUnit.MILLIS, Duration.ofMillis(LoadStatistics.CLOCK)).toMillis();
 
         @Override
         public long getInitialDelay() {

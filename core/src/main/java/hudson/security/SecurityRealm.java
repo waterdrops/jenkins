@@ -24,46 +24,52 @@
 
 package hudson.security;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.DescriptorExtensionList;
 import hudson.Extension;
 import hudson.ExtensionPoint;
 import hudson.Util;
 import hudson.cli.CLICommand;
-import hudson.model.AbstractDescribableImpl;
+import hudson.model.Describable;
 import hudson.model.Descriptor;
 import hudson.security.FederatedLoginService.FederatedIdentity;
 import hudson.security.captcha.CaptchaSupport;
 import hudson.util.DescriptorList;
 import hudson.util.PluginServletFilter;
+import io.jenkins.servlet.FilterConfigWrapper;
+import io.jenkins.servlet.FilterWrapper;
+import io.jenkins.servlet.ServletExceptionWrapper;
+import jakarta.servlet.Filter;
+import jakarta.servlet.FilterConfig;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpSession;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.servlet.Filter;
-import javax.servlet.FilterConfig;
-import javax.servlet.ServletException;
-import javax.servlet.http.Cookie;
-import javax.servlet.http.HttpSession;
 import jenkins.model.IdStrategy;
 import jenkins.model.Jenkins;
 import jenkins.security.AcegiSecurityExceptionFilter;
 import jenkins.security.AuthenticationSuccessHandler;
 import jenkins.security.BasicHeaderProcessor;
+import jenkins.security.stapler.StaplerNotDispatchable;
 import jenkins.util.SystemProperties;
 import net.sf.json.JSONObject;
-import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.Symbol;
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.DoNotUse;
 import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.Stapler;
 import org.kohsuke.stapler.StaplerRequest;
+import org.kohsuke.stapler.StaplerRequest2;
 import org.kohsuke.stapler.StaplerResponse;
+import org.kohsuke.stapler.StaplerResponse2;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
@@ -142,7 +148,7 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
  * @since 1.160
  * @see PluginServletFilter
  */
-public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityRealm> implements ExtensionPoint {
+public abstract class SecurityRealm implements Describable<SecurityRealm>, ExtensionPoint {
     /**
      * Captcha Support to be used with this SecurityRealm for User Signup
      */
@@ -212,7 +218,7 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
      */
     @Override
     public Descriptor<SecurityRealm> getDescriptor() {
-        return super.getDescriptor();
+        return Describable.super.getDescriptor();
     }
 
     /**
@@ -265,7 +271,7 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
      * of Hudson, but you can return arbitrary URL.
      *
      * @param req
-     *      {@link StaplerRequest} that represents the current request. Primarily so that
+     *      {@link StaplerRequest2} that represents the current request. Primarily so that
      *      you can get the context path. By the time this method is called, the session
      *      is already invalidated. Never null.
      * @param auth
@@ -273,14 +279,31 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
      *      This parameter allows you to redirect people to different pages depending on who they are.
      * @return
      *      never null.
-     * @since 2.266
-     * @see #doLogout(StaplerRequest, StaplerResponse)
+     * @since 2.475
+     * @see #doLogout(StaplerRequest2, StaplerResponse2)
      */
+    protected String getPostLogOutUrl2(StaplerRequest2 req, Authentication auth) {
+        if (Util.isOverridden(SecurityRealm.class, getClass(), "getPostLogOutUrl2", StaplerRequest.class, Authentication.class)) {
+            return getPostLogOutUrl2(StaplerRequest.fromStaplerRequest2(req), auth);
+        } else {
+            return getPostLogOutUrl2Impl(req, auth);
+        }
+    }
+
+    /**
+     * @deprecated use {@link #getPostLogOutUrl2(StaplerRequest2, Authentication)}
+     * @since 2.266
+     */
+    @Deprecated
     protected String getPostLogOutUrl2(StaplerRequest req, Authentication auth) {
+        return getPostLogOutUrl2Impl(StaplerRequest.toStaplerRequest2(req), auth);
+    }
+
+    private String getPostLogOutUrl2Impl(StaplerRequest2 req, Authentication auth) {
         if (Util.isOverridden(SecurityRealm.class, getClass(), "getPostLogOutUrl", StaplerRequest.class, org.acegisecurity.Authentication.class) && !insideGetPostLogOutUrl.get()) {
             insideGetPostLogOutUrl.set(true);
             try {
-                return getPostLogOutUrl(req, org.acegisecurity.Authentication.fromSpring(auth));
+                return getPostLogOutUrl(StaplerRequest.fromStaplerRequest2(req), org.acegisecurity.Authentication.fromSpring(auth));
             } finally {
                 insideGetPostLogOutUrl.set(false);
             }
@@ -296,7 +319,7 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
      */
     @Deprecated
     protected String getPostLogOutUrl(StaplerRequest req, org.acegisecurity.Authentication auth) {
-        return getPostLogOutUrl2(req, auth.toSpring());
+        return getPostLogOutUrl2(StaplerRequest.toStaplerRequest2(req), auth.toSpring());
     }
 
     public CaptchaSupport getCaptchaSupport() {
@@ -316,25 +339,52 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
      *
      * <p>
      * The default implementation erases the session and do a few other clean up, then
-     * redirect the user to the URL specified by {@link #getPostLogOutUrl2(StaplerRequest, Authentication)}.
+     * redirect the user to the URL specified by {@link #getPostLogOutUrl2(StaplerRequest2, Authentication)}.
      *
+     * @since 2.475
+     */
+    public void doLogout(StaplerRequest2 req, StaplerResponse2 rsp) throws IOException, ServletException {
+        if (Util.isOverridden(SecurityRealm.class, getClass(), "doLogout", StaplerRequest.class, StaplerResponse.class)) {
+            try {
+                doLogout(StaplerRequest.fromStaplerRequest2(req), StaplerResponse.fromStaplerResponse2(rsp));
+            } catch (javax.servlet.ServletException e) {
+                throw ServletExceptionWrapper.toJakartaServletException(e);
+            }
+        } else {
+            doLogoutImpl(req, rsp);
+        }
+    }
+
+    /**
+     * @deprecated use {@link #doLogout(StaplerRequest2, StaplerResponse2)}
      * @since 1.314
      */
-    public void doLogout(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+    @Deprecated
+    @StaplerNotDispatchable
+    public void doLogout(StaplerRequest req, StaplerResponse rsp) throws IOException, javax.servlet.ServletException {
+        try {
+            doLogoutImpl(StaplerRequest.toStaplerRequest2(req), StaplerResponse.toStaplerResponse2(rsp));
+        } catch (ServletException e) {
+            throw ServletExceptionWrapper.fromJakartaServletException(e);
+        }
+    }
+
+    void doLogoutImpl(StaplerRequest2 req, StaplerResponse2 rsp) throws IOException, ServletException {
         HttpSession session = req.getSession(false);
         if (session != null)
             session.invalidate();
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         SecurityContextHolder.clearContext();
 
-        String contextPath = req.getContextPath().length() > 0 ? req.getContextPath() : "/";
+        String contextPath = !req.getContextPath().isEmpty() ? req.getContextPath() : "/";
         resetRememberMeCookie(req, rsp, contextPath);
         clearStaleSessionCookies(req, rsp, contextPath);
 
         rsp.sendRedirect2(getPostLogOutUrl2(req, auth));
     }
 
-    private void resetRememberMeCookie(StaplerRequest req, StaplerResponse rsp, String contextPath) {
+    @SuppressFBWarnings(value = "INSECURE_COOKIE", justification = "TODO needs triage")
+    private void resetRememberMeCookie(StaplerRequest2 req, StaplerResponse2 rsp, String contextPath) {
         Cookie cookie = new Cookie(AbstractRememberMeServices.SPRING_SECURITY_REMEMBER_ME_COOKIE_KEY, "");
         cookie.setMaxAge(0);
         cookie.setSecure(req.isSecure());
@@ -343,7 +393,7 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
         rsp.addCookie(cookie);
     }
 
-    private void clearStaleSessionCookies(StaplerRequest req, StaplerResponse rsp, String contextPath) {
+    private void clearStaleSessionCookies(StaplerRequest2 req, StaplerResponse2 rsp, String contextPath) {
         /* While "executableWar.jetty.sessionIdCookieName" and
          * "executableWar.jetty.disableCustomSessionIdCookieName"
          * <https://github.com/jenkinsci/extras-executable-war/blob/6558df699d1366b18d045d2ffda3e970df377873/src/main/java/Main.java#L79-L97>
@@ -517,7 +567,7 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
     /**
      * Generates a captcha image.
      */
-    public final void doCaptcha(StaplerRequest req, StaplerResponse rsp) throws IOException {
+    public final void doCaptcha(StaplerRequest2 req, StaplerResponse2 rsp) throws IOException {
         if (captchaSupport != null) {
             String id = req.getSession().getId();
             rsp.setContentType("image/png");
@@ -534,7 +584,7 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
      */
     protected final boolean validateCaptcha(String text) {
         if (captchaSupport != null) {
-            String id = Stapler.getCurrentRequest().getSession().getId();
+            String id = Stapler.getCurrentRequest2().getSession().getId();
             return captchaSupport.validateCaptcha(id, text);
         }
 
@@ -571,10 +621,29 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
      * For other plugins that want to contribute {@link Filter}, see
      * {@link PluginServletFilter}.
      *
-     * @since 1.271
+     * @since 2.475
      */
     public Filter createFilter(FilterConfig filterConfig) {
-        LOGGER.entering(SecurityRealm.class.getName(), "createFilter");
+        if (Util.isOverridden(SecurityRealm.class, getClass(), "createFilter", javax.servlet.FilterConfig.class)) {
+            return FilterWrapper.toJakartaFilter(createFilter(
+                    filterConfig != null ? FilterConfigWrapper.fromJakartaFilterConfig(filterConfig) : null));
+        } else {
+            return createFilterImpl(filterConfig);
+        }
+    }
+
+    /**
+     * @deprecated use {@link #createFilter(FilterConfig)}
+     * @since 1.271
+     */
+    @Deprecated
+    public javax.servlet.Filter createFilter(javax.servlet.FilterConfig filterConfig) {
+        return FilterWrapper.fromJakartaFilter(createFilterImpl(
+                filterConfig != null ? FilterConfigWrapper.toJakartaFilterConfig(filterConfig) : null));
+    }
+
+    private Filter createFilterImpl(FilterConfig filterConfig) {
+        LOGGER.entering(SecurityRealm.class.getName(), "createFilterImpl");
 
         SecurityComponents sc = getSecurityComponents();
         List<Filter> filters = new ArrayList<>();
@@ -592,7 +661,6 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
             BasicAuthenticationEntryPoint basicAuthenticationEntryPoint = new BasicAuthenticationEntryPoint();
             basicAuthenticationEntryPoint.setRealmName("Jenkins");
             bhp.setAuthenticationEntryPoint(basicAuthenticationEntryPoint);
-            bhp.setRememberMeServices(sc.rememberMe2);
             filters.add(bhp);
         }
         {
@@ -609,14 +677,16 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
             apf.setAuthenticationFailureHandler(new SimpleUrlAuthenticationFailureHandler("/loginError"));
             filters.add(apf);
         }
-        filters.add(new RememberMeAuthenticationFilter(sc.manager2, sc.rememberMe2));
+        final RememberMeAuthenticationFilter rememberMe = new RememberMeAuthenticationFilter(sc.manager2, sc.rememberMe2);
+        rememberMe.setSessionAuthenticationStrategy(new SessionFixationProtectionStrategy());
+        filters.add(rememberMe);
         filters.addAll(commonFilters());
-        return new ChainedServletFilter(filters);
+        return new ChainedServletFilter2(filters);
     }
 
     protected final List<Filter> commonFilters() {
         // like Jenkins.ANONYMOUS:
-        AnonymousAuthenticationFilter apf = new AnonymousAuthenticationFilter("anonymous", "anonymous", Collections.singletonList(new SimpleGrantedAuthority("anonymous")));
+        AnonymousAuthenticationFilter apf = new AnonymousAuthenticationFilter("anonymous", "anonymous", List.of(new SimpleGrantedAuthority("anonymous")));
         ExceptionTranslationFilter etf = new ExceptionTranslationFilter(new HudsonAuthenticationEntryPoint("/" + getLoginUrl() + "?from={0}"));
         etf.setAccessDeniedHandler(new AccessDeniedHandlerImpl());
         UnwrapSecurityExceptionFilter usef = new UnwrapSecurityExceptionFilter();
@@ -639,52 +709,57 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
      */
     @Restricted(DoNotUse.class)
     public static String getFrom() {
-        String from = null, returnValue = null;
-        final StaplerRequest request = Stapler.getCurrentRequest();
+        String from = null;
+        final StaplerRequest2 request = Stapler.getCurrentRequest2();
 
         // Try to obtain a return point from the query parameter
         if (request != null) {
             from = request.getParameter("from");
         }
 
+        // On the 404 error page, use the session attribute it sets
+        if (request != null && request.getRequestURI().equals(request.getContextPath() + "/404")) {
+            final HttpSession session = request.getSession(false);
+            if (session != null) {
+                final Object attribute = session.getAttribute("from");
+                if (attribute != null) {
+                    from = attribute.toString();
+                }
+            }
+        }
+
         // If entry point was not found, try to deduce it from the request URI
-        // except pages related to login process
+        // except pages related to login process and the 404 error page
         if (from == null
                 && request != null
                 && request.getRequestURI() != null
-                && !request.getRequestURI().equals("/loginError")
-                && !request.getRequestURI().equals("/login")) {
-
-                from = request.getRequestURI();
+                // The custom login page makes the next two lines obsolete, but safer to have them.
+                && !request.getRequestURI().equals(request.getContextPath() + "/loginError")
+                && !request.getRequestURI().equals(request.getContextPath() + "/login")
+                && !request.getRequestURI().equals(request.getContextPath() + "/404")) {
+            from = request.getRequestURI();
         }
 
         // If deduced entry point isn't deduced yet or the content is a blank value
         // use the root web point "/" as a fallback
-        from = StringUtils.defaultIfBlank(from, "/").trim();
+        if (from == null || from.isBlank()) {
+            from = "/";
+        }
+        from = from.trim();
 
         // Encode the return value
-        try {
-            returnValue = URLEncoder.encode(from, "UTF-8");
-        } catch (UnsupportedEncodingException e) { }
+        String returnValue = URLEncoder.encode(from, StandardCharsets.UTF_8);
 
         // Return encoded value or at least "/" in the case exception occurred during encode()
         // or if the encoded content is blank value
-        return StringUtils.isBlank(returnValue) ? "/" : returnValue;
+        return returnValue == null || returnValue.isBlank() ? "/" : returnValue;
     }
 
     private static class None extends SecurityRealm {
         @Override
         public SecurityComponents createSecurityComponents() {
-            return new SecurityComponents(new AuthenticationManager() {
-                @Override
-                public Authentication authenticate(Authentication authentication) {
-                    return authentication;
-                }
-            }, new UserDetailsService() {
-                @Override
-                public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-                    throw new UsernameNotFoundException(username);
-                }
+            return new SecurityComponents((AuthenticationManager) authentication -> authentication, username -> {
+                throw new UsernameNotFoundException(username);
             });
         }
 
@@ -701,7 +776,7 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
          */
         @Override
         public Filter createFilter(FilterConfig filterConfig) {
-            return new ChainedServletFilter();
+            return new ChainedServletFilter2();
         }
 
         /**
@@ -715,13 +790,14 @@ public abstract class SecurityRealm extends AbstractDescribableImpl<SecurityReal
         @Symbol("none")
         public static class DescriptorImpl extends Descriptor<SecurityRealm> {
 
+            @NonNull
             @Override
             public String getDisplayName() {
                 return Messages.NoneSecurityRealm_DisplayName();
             }
 
             @Override
-            public SecurityRealm newInstance(StaplerRequest req, JSONObject formData) throws Descriptor.FormException {
+            public SecurityRealm newInstance(StaplerRequest2 req, JSONObject formData) throws Descriptor.FormException {
                 return NO_AUTHENTICATION;
             }
         }

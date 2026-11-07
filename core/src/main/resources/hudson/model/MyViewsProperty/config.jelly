@@ -26,6 +26,10 @@ THE SOFTWARE.
 <j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
   <f:entry title="${%Default View}"
     description="${%description}">
-    <f:textbox field="primaryViewName" checkUrl="'${rootURL}/${h.jsStringEscape(instance.url)}viewExistsCheck?value='+encodeURIComponent(this.value)+'&amp;exists=true'"/>
+    <f:select field="primaryViewName"/>
   </f:entry>
+  <j:invokeStatic var="allViewsTabBar" className="hudson.views.ViewsTabBar" method="all"/>
+  <j:if test="${allViewsTabBar.size() > 1}">
+    <f:dropdownDescriptorSelector field="viewsTabBar" title="${%Views Tab Bar}"/>
+  </j:if>
 </j:jelly>

@@ -27,12 +27,6 @@ THE SOFTWARE.
 -->
 <?jelly escape-by-default='true'?>
 <j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:s="/lib/form">
-  <l:header />
-  <l:side-panel>
-    <l:tasks>
-      <l:task href="${rootURL}/" icon="icon-up icon-md" title="${%Back to Dashboard}"/>
-      <l:task href="${rootURL}/manage" icon="symbol-settings" title="${%Manage Jenkins}"/>
-      <l:task href="${rootURL}/pluginManager/" icon="icon-plugin icon-lg" title="${%Manage Plugins}"/>
-    </l:tasks>
-  </l:side-panel>
+  <!-- TODO - this file and its translations can be removed when Manage Jenkins flag is removed -->
+  <st:include page="sidepanel.jelly" it="${app.pluginManager}" />
 </j:jelly>

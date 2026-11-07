@@ -27,27 +27,26 @@ package hudson.model;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import hudson.XmlFile;
 import java.util.logging.Level;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.jvnet.hudson.test.Issue;
-import org.jvnet.hudson.test.JenkinsSessionRule;
-import org.jvnet.hudson.test.LoggerRule;
+import org.jvnet.hudson.test.LogRecorder;
+import org.jvnet.hudson.test.junit.jupiter.JenkinsSessionExtension;
 
-public class AbstractItem2Test {
+class AbstractItem2Test {
 
-    @Rule
-    public JenkinsSessionRule sessions = new JenkinsSessionRule();
+    @RegisterExtension
+    private final JenkinsSessionExtension sessions = new JenkinsSessionExtension();
 
-    @Rule
-    public LoggerRule logging = new LoggerRule().record(XmlFile.class, Level.WARNING).capture(100);
+    private final LogRecorder logging = new LogRecorder().record(XmlFile.class, Level.WARNING).capture(100);
 
     @Issue("JENKINS-45892")
     @Test
-    public void badSerialization() throws Throwable {
+    void badSerialization() throws Throwable {
         sessions.then(j -> {
                 FreeStyleProject p1 = j.createFreeStyleProject("p1");
                 p1.setDescription("this is p1");
@@ -62,7 +61,15 @@ public class AbstractItem2Test {
         sessions.then(j -> {
                 FreeStyleProject p1 = j.jenkins.getItemByFullName("p1", FreeStyleProject.class);
                 FreeStyleProject p2 = j.jenkins.getItemByFullName("p2", FreeStyleProject.class);
-                assertEquals(/* does not work yet: p1 */ null, p2.getProperty(BadProperty.class).other);
+                /*
+                 * AbstractItem.Replacer.readResolve() is racy, as its comments acknowledge. Jobs
+                 * are loaded in parallel, and p1 may not have been loaded yet when we are loading
+                 * p2. The only way for this test to work reliably is to reload p2 after p1 has
+                 * already been loaded, thus assuring that p2's reference to p1 can be properly
+                 * deserialized.
+                 */
+                p2.doReload();
+                assertEquals(p1, p2.getProperty(BadProperty.class).other);
         });
     }
 

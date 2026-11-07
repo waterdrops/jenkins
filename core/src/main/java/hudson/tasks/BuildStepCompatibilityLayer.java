@@ -40,6 +40,7 @@ import hudson.model.TaskListener;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import jenkins.tasks.SimpleBuildStep;
 
 /**
@@ -68,9 +69,8 @@ public abstract class BuildStepCompatibilityLayer implements BuildStep {
      */
     @Override
     public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener) throws InterruptedException, IOException {
-        if (this instanceof SimpleBuildStep) {
+        if (this instanceof SimpleBuildStep step) {
             // delegate to the overloaded version defined in SimpleBuildStep
-            final SimpleBuildStep step = (SimpleBuildStep) this;
             final FilePath workspace = build.getWorkspace();
             if (step.requiresWorkspace() && workspace == null) {
                 throw new AbortException("no workspace for " + build);
@@ -103,7 +103,7 @@ public abstract class BuildStepCompatibilityLayer implements BuildStep {
         // delegate to getJobAction (singular) for backward compatible behavior
         Action a = getProjectAction(project);
         if (a == null)    return Collections.emptyList();
-        return Collections.singletonList(a);
+        return List.of(a);
     }
 
 

@@ -25,6 +25,7 @@
 package hudson.os;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Functions;
 import java.io.File;
 import java.io.IOException;
@@ -36,7 +37,7 @@ import org.apache.commons.io.IOUtils;
 /**
  * Utilities for the Windows Platform.
  * Adapted from:
- * https://blogs.msdn.microsoft.com/twistylittlepassagesallalike/2011/04/23/everyone-quotes-command-line-arguments-the-wrong-way/
+ * <a href="https://docs.microsoft.com/en-us/archive/blogs/twistylittlepassagesallalike/everyone-quotes-command-line-arguments-the-wrong-way">Everyone quotes command line arguments the wrong way</a>
  *
  * @since 2.183
  */
@@ -70,9 +71,7 @@ public class WindowsUtil {
             }
             // else backslashes have no special meaning and don't need to be escaped here
 
-            for (int j = 0; j < nrBackslashes; j++) {
-                sb.append('\\');
-            }
+            sb.append("\\".repeat(Math.max(0, nrBackslashes)));
 
             if (i < end) {
                 sb.append(argument.charAt(i));
@@ -97,6 +96,7 @@ public class WindowsUtil {
      * @param argv arguments to be quoted or escaped for {@code cmd.exe /C ...}.
      * @return properly quoted and escaped arguments to {@code cmd.exe /C ...}.
      */
+    @SuppressFBWarnings(value = "COMMAND_INJECTION", justification = "TODO needs triage")
     public static @NonNull Process execCmd(String... argv) throws IOException {
         String command = Arrays.stream(argv).map(WindowsUtil::quoteArgumentForCmd).collect(Collectors.joining(" "));
         return Runtime.getRuntime().exec(new String[]{"cmd.exe", "/C", command});

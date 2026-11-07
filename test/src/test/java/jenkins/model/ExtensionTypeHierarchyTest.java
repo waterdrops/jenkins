@@ -1,24 +1,31 @@
 package jenkins.model;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.instanceOf;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import hudson.ExtensionPoint;
 import java.util.Arrays;
 import java.util.Comparator;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.TestExtension;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
 /**
  * @author Kohsuke Kawaguchi
  */
-public class ExtensionTypeHierarchyTest {
+@WithJenkins
+class ExtensionTypeHierarchyTest {
 
-    @Rule
-    public JenkinsRule j = new JenkinsRule();
+    private JenkinsRule j;
+
+    @BeforeEach
+    void setUp(JenkinsRule rule) {
+        j = rule;
+    }
 
     public interface Animal extends ExtensionPoint {}
 
@@ -34,14 +41,14 @@ public class ExtensionTypeHierarchyTest {
      * Swan is both white and animal, so a single swan instance gets listed to both.
      */
     @Test
-    public void sameExtensionCanImplementMultipleExtensionPoints() {
+    void sameExtensionCanImplementMultipleExtensionPoints() {
         Animal[] animals = sort(j.jenkins.getExtensionList(Animal.class).toArray(new Animal[2]));
-        assertTrue(animals[0] instanceof Crow);
-        assertTrue(animals[1] instanceof Swan);
+        assertThat(animals[0], instanceOf(Crow.class));
+        assertThat(animals[1], instanceOf(Swan.class));
         assertEquals(2, animals.length);
 
         White[] whites = sort(j.jenkins.getExtensionList(White.class).toArray(new White[1]));
-        assertTrue(whites[0] instanceof Swan);
+        assertThat(whites[0], instanceOf(Swan.class));
         assertEquals(1, whites.length);
 
         assertSame(animals[1], whites[0]);
@@ -51,12 +58,7 @@ public class ExtensionTypeHierarchyTest {
      * Sort by class name
      */
     private <T> T[] sort(T[] a) {
-        Arrays.sort(a, new Comparator<T>() {
-            @Override
-            public int compare(T o1, T o2) {
-                return o1.getClass().getName().compareTo(o2.getClass().getName());
-            }
-        });
+        Arrays.sort(a, Comparator.comparing(o -> o.getClass().getName()));
         return a;
     }
 }

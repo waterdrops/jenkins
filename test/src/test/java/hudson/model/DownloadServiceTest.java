@@ -1,8 +1,9 @@
 package hudson.model;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
+import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.model.DownloadService.Downloadable;
 import hudson.tasks.Ant.AntInstaller;
 import hudson.tasks.Maven;
@@ -14,32 +15,31 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import net.sf.json.JSONObject;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.WithoutJenkins;
 
 /**
  * @author Kohsuke Kawaguchi
  */
-public class DownloadServiceTest {
+class DownloadServiceTest {
 
     @WithoutJenkins // could have been in core/src/test/ but update-center.json was already in test/src/test/ (used by UpdateSiteTest)
     @Test
-    public void testLoadJSON() throws Exception {
-        assertRoots("[list]", "hudson.tasks.Maven.MavenInstaller.json"); // format used by most tools
-        assertRoots("[data, version]", "hudson.tools.JDKInstaller.json"); // anomalous format
-        assertRoots("[connectionCheckUrl, core, id, plugins, signature, updateCenterVersion]", "update-center.json");
+    void testLoadJSON() throws Exception {
+        assertRoots("[list]", getClass().getResource("hudson.tasks.Maven.MavenInstaller.json")); // format used by most tools
+        assertRoots("[data, version]", getClass().getResource("hudson.tools.JDKInstaller.json")); // anomalous format
+        assertRoots("[connectionCheckUrl, core, id, plugins, signature, updateCenterVersion]", UpdateSiteTest.extract("update-center.json"));
     }
 
-    private static void assertRoots(String expected, String file) throws Exception {
-        URL resource = DownloadServiceTest.class.getResource(file);
-        assertNotNull(file, resource);
+    private static void assertRoots(String expected, URL resource) throws Exception {
+        assertNotNull(resource);
         JSONObject json = JSONObject.fromObject(DownloadService.loadJSON(resource));
-        @SuppressWarnings("unchecked") Set<String> keySet = json.keySet();
+        Set<String> keySet = json.keySet();
         assertEquals(expected, new TreeSet<>(keySet).toString());
     }
 
     @Test
-    public void testReduceFunctionWithMavenJsons() throws Exception {
+    void testReduceFunctionWithMavenJsons() throws Exception {
         URL resource1 = DownloadServiceTest.class.getResource("hudson.tasks.Maven.MavenInstaller1.json");
         URL resource2 = DownloadServiceTest.class.getResource("hudson.tasks.Maven.MavenInstaller2.json");
         URL resource3 = DownloadServiceTest.class.getResource("hudson.tasks.Maven.MavenInstaller3.json");
@@ -58,7 +58,7 @@ public class DownloadServiceTest {
     }
 
     @Test
-    public void testReduceFunctionWithAntJsons() throws Exception {
+    void testReduceFunctionWithAntJsons() throws Exception {
         URL resource1 = DownloadServiceTest.class.getResource("hudson.tasks.Ant.AntInstaller1.json");
         URL resource2 = DownloadServiceTest.class.getResource("hudson.tasks.Ant.AntInstaller2.json");
         URL resource3 = DownloadServiceTest.class.getResource("hudson.tasks.Ant.AntInstaller3.json");
@@ -77,7 +77,7 @@ public class DownloadServiceTest {
     }
 
     @Test
-    public void testReduceFunctionWithNotDefaultSchemaJsons() throws Exception {
+    void testReduceFunctionWithNotDefaultSchemaJsons() throws Exception {
         URL resource1 = DownloadServiceTest.class.getResource("hudson.plugins.cmake.CmakeInstaller1.json");
         URL resource2 = DownloadServiceTest.class.getResource("hudson.plugins.cmake.CmakeInstaller2.json");
         JSONObject json1 = JSONObject.fromObject(DownloadService.loadJSON(resource1));
@@ -98,6 +98,7 @@ public class DownloadServiceTest {
         }
 
         public static final class DescriptorImpl extends DownloadFromUrlInstaller.DescriptorImpl<Maven.MavenInstaller> {
+            @NonNull
             @Override
             public String getDisplayName() {
                 return "";

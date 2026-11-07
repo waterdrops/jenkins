@@ -62,6 +62,8 @@ import hudson.util.AdaptedIterator;
 import hudson.util.HttpResponses;
 import hudson.util.Iterators;
 import hudson.util.VariableResolver;
+import io.jenkins.servlet.ServletExceptionWrapper;
+import jakarta.servlet.ServletException;
 import java.io.File;
 import java.io.IOException;
 import java.io.InterruptedIOException;
@@ -73,7 +75,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -81,7 +82,6 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.servlet.ServletException;
 import jenkins.model.Jenkins;
 import jenkins.model.lazy.BuildReference;
 import jenkins.model.lazy.LazyBuildMixIn;
@@ -158,7 +158,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
      */
     protected transient List<Environment> buildEnvironments;
 
-    private final transient LazyBuildMixIn.RunMixIn<P, R> runMixIn = new LazyBuildMixIn.RunMixIn<P, R>() {
+    private final transient LazyBuildMixIn.RunMixIn<P, R> runMixIn = new LazyBuildMixIn.RunMixIn<>() {
         @Override protected R asRun() {
             return _this();
         }
@@ -184,6 +184,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
         return runMixIn;
     }
 
+    @NonNull
     @Override protected final BuildReference<R> createReference() {
         return getRunMixIn().createReference();
     }
@@ -209,7 +210,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
      *      null, for example if the agent that this build run no longer exists.
      */
     public @CheckForNull Node getBuiltOn() {
-        if (builtOn == null || builtOn.equals(""))
+        if (builtOn == null || builtOn.isEmpty())
             return Jenkins.get();
         else
             return Jenkins.get().getNode(builtOn);
@@ -270,9 +271,11 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
      * <p>
      * If you override this method, you'll most likely also want to override
      * {@link #getDisplayName()}.
+     * @deprecated navigation through a hierarchy should be done through breadcrumbs, do not add a link using this method
      */
+    @Deprecated(since = "2.364")
     public String getUpUrl() {
-        return Functions.getNearestAncestorUrl(Stapler.getCurrentRequest(), getParent()) + '/';
+        return Functions.getNearestAncestorUrl(Stapler.getCurrentRequest2(), getParent()) + '/';
     }
 
     /**
@@ -460,6 +463,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
             return wsl.allocate(ws, getBuild());
         }
 
+        @NonNull
         @Override
         public Result run(@NonNull BuildListener listener) throws Exception {
             final Node node = getCurrentNode();
@@ -483,7 +487,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
                     if (node instanceof Jenkins) {
                         listener.getLogger().print(Messages.AbstractBuild_BuildingOnMaster());
                     } else {
-                        listener.getLogger().print(Messages.AbstractBuild_BuildingRemotely(ModelHyperlinkNote.encodeTo("/computer/" + builtOn, node.getDisplayName())));
+                        listener.getLogger().print(Messages.AbstractBuild_BuildingRemotely(ModelHyperlinkNote.encodeTo("/computer/" + builtOn + "/", node.getDisplayName())));
                         Set<LabelAtom> assignedLabels = new HashSet<>(node.getAssignedLabels());
                         assignedLabels.remove(node.getSelfLabel());
                         if (!assignedLabels.isEmpty()) {
@@ -603,8 +607,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
             final Node currentNode = getCurrentNode();
             Launcher l = currentNode.createLauncher(listener);
 
-            if (project instanceof BuildableItemWithBuildWrappers) {
-                BuildableItemWithBuildWrappers biwbw = (BuildableItemWithBuildWrappers) project;
+            if (project instanceof BuildableItemWithBuildWrappers biwbw) {
                 for (BuildWrapper bw : biwbw.getBuildWrappersList())
                     l = bw.decorateLauncher(AbstractBuild.this, l, listener);
             }
@@ -702,7 +705,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
         protected abstract void post2(BuildListener listener) throws Exception;
 
         @Override
-        public final void post(BuildListener listener) throws Exception {
+        public final void post(@NonNull BuildListener listener) throws Exception {
             try {
                 post2(listener);
             } finally {
@@ -716,7 +719,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
         }
 
         @Override
-        public void cleanUp(BuildListener listener) throws Exception {
+        public void cleanUp(@NonNull BuildListener listener) throws Exception {
             if (lease != null) {
                 lease.release();
                 lease = null;
@@ -923,7 +926,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
     @Override
     @NonNull public List<ChangeLogSet<? extends ChangeLogSet.Entry>> getChangeSets() {
         ChangeLogSet<? extends ChangeLogSet.Entry> cs = getChangeSet();
-        return cs.isEmptySet() ? Collections.emptyList() : Collections.singletonList(cs);
+        return cs.isEmptySet() ? Collections.emptyList() : List.of(cs);
     }
 
     /**
@@ -947,8 +950,9 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
         return ChangeLogSet.createEmpty(this);
     }
 
+    @NonNull
     @Override
-    public EnvVars getEnvironment(TaskListener log) throws IOException, InterruptedException {
+    public EnvVars getEnvironment(@NonNull TaskListener log) throws IOException, InterruptedException {
         EnvVars env = super.getEnvironment(log);
         FilePath ws = getWorkspace();
         if (ws != null) { // if this is done very early on in the build, workspace may not be decided yet. see JENKINS-3997
@@ -992,7 +996,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
             return new EnvironmentList(buildEnvironments);
         }
 
-        return new EnvironmentList(buildEnvironments == null ? Collections.emptyList() : Collections.unmodifiableList(new ArrayList<>(buildEnvironments)));
+        return new EnvironmentList(buildEnvironments == null ? Collections.emptyList() : List.copyOf(buildEnvironments));
     }
 
     public Calendar due() {
@@ -1003,7 +1007,7 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
      * {@inheritDoc}
      * The action may have a {@code summary.jelly} view containing a {@code <t:summary>} or other {@code <tr>}.
      */
-    @Override public void addAction(Action a) {
+    @Override public void addAction(@NonNull Action a) {
         super.addAction(a);
     }
 
@@ -1191,18 +1195,13 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
     public Iterable<AbstractBuild<?, ?>> getDownstreamBuilds(final AbstractProject<?, ?> that) {
         final Iterable<Integer> nums = getDownstreamRelationship(that).listNumbers();
 
-        return new Iterable<AbstractBuild<?, ?>>() {
-            @Override
-            public Iterator<AbstractBuild<?, ?>> iterator() {
-                return Iterators.removeNull(
-                    new AdaptedIterator<Integer, AbstractBuild<?, ?>>(nums) {
-                        @Override
-                        protected AbstractBuild<?, ?> adapt(Integer item) {
-                            return that.getBuildByNumber(item);
-                        }
-                    });
-            }
-        };
+        return () -> Iterators.removeNull(
+            new AdaptedIterator<>(nums) {
+                @Override
+                protected AbstractBuild<?, ?> adapt(Integer item) {
+                    return that.getBuildByNumber(item);
+                }
+            });
     }
 
     /**
@@ -1387,8 +1386,12 @@ public abstract class AbstractBuild<P extends AbstractProject<P, R>, R extends A
      */
     @Deprecated
     @RequirePOST // #doStop() should be preferred, but better to be safe
-    public void doStop(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
-        doStop().generateResponse(req, rsp, this);
+    public void doStop(StaplerRequest req, StaplerResponse rsp) throws IOException, javax.servlet.ServletException {
+        try {
+            doStop().generateResponse(StaplerRequest.toStaplerRequest2(req), StaplerResponse.toStaplerResponse2(rsp), this);
+        } catch (ServletException e) {
+            throw ServletExceptionWrapper.fromJakartaServletException(e);
+        }
     }
 
     /**

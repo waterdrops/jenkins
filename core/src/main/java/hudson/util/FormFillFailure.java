@@ -27,15 +27,14 @@ package hudson.util;
 import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.Functions;
 import hudson.Util;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Locale;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletResponse;
-import jenkins.model.Jenkins;
 import org.kohsuke.stapler.HttpResponse;
 import org.kohsuke.stapler.Stapler;
-import org.kohsuke.stapler.StaplerRequest;
-import org.kohsuke.stapler.StaplerResponse;
+import org.kohsuke.stapler.StaplerRequest2;
+import org.kohsuke.stapler.StaplerResponse2;
 
 /**
  * Represents a failure in a form field doFillXYZ method.
@@ -95,7 +94,7 @@ public abstract class FormFillFailure extends IOException implements HttpRespons
         }
 
         return _errorWithMarkup(Util.escape(message) +
-                " <a href='#' class='showDetails'>"
+                " </div><div><a href='#' class='showDetails'>"
                 + Messages.FormValidation_Error_Details()
                 + "</a><pre style='display:none'>"
                 + Util.escape(Functions.printThrowable(e)) +
@@ -133,13 +132,11 @@ public abstract class FormFillFailure extends IOException implements HttpRespons
         return new FormFillFailure(kind, message) {
             @Override
             public String renderHtml() {
-                StaplerRequest req = Stapler.getCurrentRequest();
+                StaplerRequest2 req = Stapler.getCurrentRequest2();
                 if (req == null) { // being called from some other context
                     return message;
                 }
-                // 1x16 spacer needed for IE since it doesn't support min-height
-                return "<div class=" + getKind().name().toLowerCase(Locale.ENGLISH) + "><img src='" +
-                        req.getContextPath() + Jenkins.RESOURCE_PATH + "/images/none.gif' height=16 width=1>" +
+                return "<div class=" + getKind().name().toLowerCase(Locale.ENGLISH) + ">" +
                         message + "</div>";
             }
 
@@ -185,11 +182,14 @@ public abstract class FormFillFailure extends IOException implements HttpRespons
     }
 
     @Override
-    public void generateResponse(StaplerRequest req, StaplerResponse rsp, Object node)
+    public void generateResponse(StaplerRequest2 req, StaplerResponse2 rsp, Object node)
             throws IOException, ServletException {
         rsp.setContentType("text/html;charset=UTF-8");
         rsp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
         rsp.setHeader("X-Jenkins-Select-Error", selectionCleared ? "clear" : "retain");
+        if (FormValidation.APPLY_CONTENT_SECURITY_POLICY_HEADERS) {
+            rsp.setHeader("Content-Security-Policy", "sandbox; default-src 'none';");
+        }
         rsp.getWriter().print(renderHtml());
     }
 

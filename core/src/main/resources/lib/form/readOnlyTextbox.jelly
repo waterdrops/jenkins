@@ -31,15 +31,17 @@ THE SOFTWARE.
     <st:attribute name="field">
       Used for databinding. TBD.
     </st:attribute>
-    <st:attribute name="name">
-      This becomes @name of the &lt;input> tag.
+    <st:attribute name="name"> <![CDATA[
+      This becomes @name of the <input> tag.
       If @field is specified, this value is inferred from it.
+    ]]>
     </st:attribute>
-    <st:attribute name="value">
-      The initial value of the field. This becomes the @value of the &lt;input> tag.
+    <st:attribute name="value"> <![CDATA[
+      The initial value of the field. This becomes the @value of the <input> tag.
       If @field is specified, the current property from the "instance" object
       will be set as the initial value automatically,
       which is the recommended approach.
+    ]]>
     </st:attribute>
     <st:attribute name="default">
       The default value of the text box, in case both @value is and 'instance[field]' is null.
@@ -59,6 +61,20 @@ THE SOFTWARE.
 
       If @field is specified, this will be inferred automatically,
       which is the recommended approach.
+    </st:attribute>
+    <st:attribute name="onchange" deprecated="true">
+      Inline JavaScript to execute when the textbox is changed.
+      Deprecated because this attribute is incompatible with adding Content-Security-Policy to the Jenkins UI in the future.
+      Set 'id' or 'clazz' attributes as appropriate to look up this element in external Javascript files (e.g. adjuncts)
+      to add the desired behavior there (DOMContentLoaded event in static forms, Behaviour.specify if this element may be
+      dynamically added). See https://github.com/jenkinsci/jenkins/pull/6852 for an example.
+    </st:attribute>
+    <st:attribute name="onkeyup" deprecated="true">
+      Inline JavaScript to execute when the keyup event is fired.
+      Deprecated because this attribute is incompatible with adding Content-Security-Policy to the Jenkins UI in the future.
+      Set 'id' or 'clazz' attributes as appropriate to look up this element in external Javascript files (e.g. adjuncts)
+      to add the desired behavior there (DOMContentLoaded event in static forms, Behaviour.specify if this element may be
+      dynamically added). See https://github.com/jenkinsci/jenkins/pull/6852 for an example.
     </st:attribute>
   </st:documentation>
   <f:prepareDatabinding />
